@@ -47,29 +47,6 @@ class QueryResolutionAgent:
         logger.info(f"[{self.name}] Processing user query...")
 
         try:
-            user_query_lower = state['user_query'].lower()
-
-            # Detect complex queries that should skip SQL generation
-            complex_keywords = ['yoy', 'year-over-year', 'year over year', 'growth rate',
-                              'compare years', 'trend', 'forecast', 'predict']
-
-            is_complex_time_query = any(keyword in user_query_lower for keyword in complex_keywords)
-
-            # For complex time-based queries, skip SQL generation and use fallback
-            if is_complex_time_query:
-                logger.info(f"[{self.name}] Detected complex time-based query - using fallback approach")
-                state['query_type'] = 'qa'
-                state['structured_query'] = f"Complex time-based analysis: {state['user_query']}"
-                state['sql_query'] = None  # Will trigger fallback in DataExtractionAgent
-                state['metadata']['query_resolution'] = {
-                    'required_tables': ['amazon_sales'],
-                    'success': True,
-                    'complex_query': True,
-                    'fallback_reason': 'Complex time-based query - using alternative data approach'
-                }
-                logger.info(f"[{self.name}] Query resolved - Type: qa (complex, using fallback)")
-                return state
-
             # Get available tables and their comprehensive context
             tables = self.data_processor.get_available_tables()
             table_contexts = {
@@ -91,29 +68,72 @@ DATABASE CONTEXT (Tables with Schemas, Sample Data & Statistics):
 KEY INSIGHTS:
 - amazon_sales table has {table_contexts.get('amazon_sales', {}).get('statistics', {}).get('total_rows', 0):,} records
 - Available Categories: {table_contexts.get('amazon_sales', {}).get('value_examples', {}).get('Category', [])}
-- Date format: MM-DD-YY (e.g., "04-30-22")
+- Date format: MM-DD-YY stored as STRING (e.g., "04-30-22")
 
 CRITICAL SQL Rules:
 1. ALWAYS use proper GROUP BY clauses - every non-aggregated column in SELECT must be in GROUP BY
 2. For DuckDB, use standard SQL syntax (no Oracle-specific functions)
 3. Column names with spaces or special characters must be quoted with double quotes: "Order ID", "ship-state"
-4. Date parsing: Use strptime() or date column name directly
-5. Common date formats in data: 'MM-DD-YY' format (e.g., '04-30-22' for April 30, 2022)
-6. For year-over-year (YoY) comparisons, you need data from two different years
-7. Q3 months are: July (07), August (08), September (09)
+4. ALWAYS filter out cancelled orders: WHERE Status != 'Cancelled' AND Amount > 0
+5. Column names are case-sensitive - use exact names from schema
+
+DATE HANDLING (CRITICAL - Date column is DATE type in DuckDB):
+- Date column in amazon_sales is already DATE type (auto-detected by DuckDB)
+- Extract year: YEAR(Date)
+- Extract quarter: QUARTER(Date)
+- Extract month: MONTH(Date)
+- Quarter mapping: Q1=1, Q2=2, Q3=3, Q4=4
+- NO need for strptime() - Date is already properly typed!
+
+YEAR-OVER-YEAR (YoY) / GROWTH RATE QUERIES:
+For queries asking about YoY growth, trends, or comparisons between years:
+
+DYNAMIC YoY Pattern (DO NOT hardcode years!):
+WITH sales_by_period AS (
+    SELECT
+        Category,
+        YEAR(Date) as year,
+        SUM(Amount) as revenue
+    FROM amazon_sales
+    WHERE Status != 'Cancelled' AND Amount > 0
+        AND QUARTER(Date) = <extract quarter from query>
+        AND UPPER("ship-state") LIKE <extract region from query if mentioned>
+    GROUP BY Category, year
+),
+yoy_calc AS (
+    SELECT
+        curr.Category,
+        curr.year as current_year,
+        prev.year as previous_year,
+        curr.revenue as current_revenue,
+        prev.revenue as previous_revenue,
+        ((curr.revenue - prev.revenue) / prev.revenue * 100) as yoy_growth_pct
+    FROM sales_by_period curr
+    LEFT JOIN sales_by_period prev
+        ON curr.Category = prev.Category
+        AND curr.year = prev.year + 1
+)
+SELECT Category, current_year, previous_year, yoy_growth_pct
+FROM yoy_calc
+WHERE previous_revenue IS NOT NULL
+ORDER BY yoy_growth_pct DESC
+LIMIT 1;
+
+DYNAMIC PARAMETER EXTRACTION:
+- "Q3" → WHERE QUARTER(Date) = 3
+- "Q1 2022" → WHERE QUARTER(Date) = 1 AND YEAR(Date) = 2022
+- "North region" → AND UPPER("ship-state") LIKE '%NORTH%'
+- "Maharashtra" → AND UPPER("ship-state") = 'MAHARASHTRA'
+- DO NOT hardcode years - use self-joins to find consecutive years automatically
 
 Common Query Patterns:
 - Top categories: SELECT Category, SUM(Amount) as total FROM amazon_sales WHERE Status != 'Cancelled' GROUP BY Category ORDER BY total DESC LIMIT 10
-- By region: SELECT "ship-state", COUNT(*) as orders FROM amazon_sales GROUP BY "ship-state" ORDER BY orders DESC
-- Time-based: Use Date column and filter with LIKE or strptime()
+- By region: SELECT "ship-state", COUNT(*) as orders FROM amazon_sales WHERE Status != 'Cancelled' GROUP BY "ship-state" ORDER BY orders DESC
+- Specific quarter: WHERE QUARTER(strptime(Date, '%m-%d-%y')) = 3
+- Specific year: WHERE YEAR(strptime(Date, '%m-%d-%y')) = 2022
 
 For SUMMARIZATION queries: Set query_type to "summarization" and sql_query to null
 For Q&A queries: Generate a valid, executable DuckDB SQL query
-
-IMPORTANT: The dataset may not have multi-year data. If asking about YoY growth:
-- First check what date ranges exist in the data
-- If only single year data exists, return a simple query showing available data instead
-- Use: SELECT DISTINCT substr(Date, -2) as year FROM amazon_sales to check years
 
 Return ONLY a JSON object (no markdown, no explanation):
 {{
@@ -203,12 +223,29 @@ class DataExtractionAgent:
                 # For Q&A, execute the specific SQL query
                 try:
                     result_df = self.data_processor.execute_query(state['sql_query'])
+                    row_count = len(result_df)
+
+                    # Get dataset metadata for context
+                    dataset_metadata = self.data_processor.get_dataset_metadata()
+
                     extracted_data = {
                         'query_result': result_df.to_dict('records'),
-                        'row_count': len(result_df),
+                        'row_count': row_count,
                         'columns': list(result_df.columns),
-                        'data_type': 'query_result'
+                        'data_type': 'query_result',
+                        'dataset_metadata': dataset_metadata
                     }
+
+                    # If query returned empty results, treat it as a data limitation case
+                    if row_count == 0:
+                        logger.warning(f"[{self.name}] Query returned 0 rows - likely data limitation")
+                        extracted_data['empty_result'] = True
+                        extracted_data['user_query'] = state['user_query']
+
+                        # Provide fallback data
+                        fallback_df = self.data_processor.get_top_categories(10)
+                        extracted_data['fallback_data'] = fallback_df.to_dict('records')
+                        extracted_data['fallback_type'] = 'category_stats'
                 except Exception as sql_error:
                     # If SQL fails, provide fallback data based on query intent
                     logger.warning(f"[{self.name}] SQL query failed, using fallback: {str(sql_error)}")
@@ -408,11 +445,13 @@ class ResponseGenerationAgent:
 
         try:
             extracted_data = state.get('extracted_data', {})
-            validation = state.get('validation_result', {})
+            validation = state.get('validation_result') or {'is_valid': True, 'confidence': 1.0, 'issues': []}
 
             # Create context for response generation
             is_fallback = extracted_data.get('fallback', False)
             has_error = extracted_data.get('data_type') == 'error'
+            empty_result = extracted_data.get('empty_result', False)
+            dataset_metadata = extracted_data.get('dataset_metadata', {})
 
             system_prompt = """You are a Retail Analytics Expert creating insights for business executives.
 
@@ -424,32 +463,64 @@ Guidelines:
 3. Highlight key trends or patterns
 4. Use business-friendly language
 5. Keep the response concise (3-5 sentences for Q&A, 1 paragraph for summaries)
-6. If using fallback data, explain what you're showing instead and why
+6. If query returned empty results, EXPLAIN WHY using dataset metadata
 7. If the exact query couldn't be answered, provide the most relevant alternative insights
-8. NEVER say you can't provide information - always provide what you CAN show from the data
+8. ALWAYS provide what you CAN show from the data
 
 Format your response in a professional, easy-to-read manner."""
 
             fallback_note = ""
-            if is_fallback:
+            if empty_result:
+                # Analyze WHY the query returned empty
+                date_range = dataset_metadata.get('date_range', {})
+                user_query_lower = state['user_query'].lower()
+
+                reasons = []
+                if 'yoy' in user_query_lower or 'year-over-year' in user_query_lower or 'year over year' in user_query_lower:
+                    if date_range.get('unique_years', 0) < 2:
+                        reasons.append(f"YoY comparison requires at least 2 years of data, but dataset only contains {date_range.get('available_years', 'limited')} data")
+
+                if 'q3' in user_query_lower:
+                    available_quarters = date_range.get('available_quarters', '')
+                    if 'Q3' not in available_quarters:
+                        reasons.append(f"Q3 data requested but not available. Dataset contains: {available_quarters}")
+
+                if 'q4' in user_query_lower:
+                    available_quarters = date_range.get('available_quarters', '')
+                    if 'Q4' not in available_quarters:
+                        reasons.append(f"Q4 data requested but not available. Dataset contains: {available_quarters}")
+
+                if reasons:
+                    fallback_note = f"\nDATA LIMITATION - Query returned empty because:\n" + "\n".join(f"- {r}" for r in reasons)
+                    fallback_note += f"\n\nDataset coverage: {date_range.get('min_date', 'Unknown')} to {date_range.get('max_date', 'Unknown')}"
+                    fallback_note += f"\nAvailable periods: {date_range.get('available_quarters', 'Unknown')}"
+                    fallback_note += f"\n\nInstead, showing relevant insights from available data ({date_range.get('available_quarters', 'available periods')})."
+                else:
+                    fallback_note = f"\nNOTE: Query returned no results. This might be due to specific filters not matching any data."
+            elif is_fallback:
                 fallback_note = f"\nNOTE: The original query couldn't be executed as specified. Providing alternative relevant data instead."
             elif has_error:
                 fallback_note = f"\nNOTE: Data extraction encountered an error. Provide the best possible response acknowledging the limitation."
+
+            # Prepare data for response
+            data_to_show = extracted_data.get('query_result', [])
+            if empty_result and extracted_data.get('fallback_data'):
+                data_to_show = extracted_data.get('fallback_data', [])
 
             user_prompt = f"""User Query: {state['user_query']}
 
 Query Type: {state['query_type']}
 {fallback_note}
 
-Extracted Data:
-{json.dumps(extracted_data, indent=2, default=str)[:2000]}
+Data to Present:
+{json.dumps(data_to_show, indent=2, default=str)[:2000]}
 
 Validation Status:
 - Valid: {validation.get('is_valid', True)}
 - Confidence: {validation.get('confidence', 1.0)}
 - Issues: {validation.get('issues', [])}
 
-Generate a clear, professional response. If showing alternative data, explain what you're showing and provide actionable insights from that data."""
+Generate a clear, professional response. Start by explaining the data limitation (if any), then provide actionable insights from the available data."""
 
             response = self.llm.invoke([
                 SystemMessage(content=system_prompt),

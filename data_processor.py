@@ -220,6 +220,56 @@ class DataProcessor:
             logger.error(f"Failed to generate summary statistics: {str(e)}")
             return {}
 
+    def get_dataset_metadata(self) -> Dict[str, Any]:
+        """Get dataset metadata including date ranges and available time periods"""
+        try:
+            metadata = {}
+
+            if 'amazon_sales' in self.tables_loaded:
+                # Get basic date range info
+                time_info = self.conn.execute("""
+                    SELECT
+                        MIN(Date) as min_date,
+                        MAX(Date) as max_date,
+                        COUNT(DISTINCT YEAR(Date)) as unique_years,
+                        COUNT(DISTINCT QUARTER(Date)) as unique_quarters
+                    FROM amazon_sales
+                    WHERE Status != 'Cancelled' AND Amount > 0
+                """).fetchdf()
+
+                # Get available years
+                years_df = self.conn.execute("""
+                    SELECT DISTINCT YEAR(Date) as year
+                    FROM amazon_sales
+                    WHERE Status != 'Cancelled' AND Amount > 0
+                    ORDER BY year
+                """).fetchdf()
+                available_years = ', '.join(str(y) for y in years_df['year'].tolist())
+
+                # Get available quarters
+                quarters_df = self.conn.execute("""
+                    SELECT DISTINCT QUARTER(Date) as quarter
+                    FROM amazon_sales
+                    WHERE Status != 'Cancelled' AND Amount > 0
+                    ORDER BY quarter
+                """).fetchdf()
+                available_quarters = ', '.join(f'Q{q}' for q in quarters_df['quarter'].tolist())
+
+                metadata['date_range'] = {
+                    'min_date': str(time_info['min_date'].iloc[0]),
+                    'max_date': str(time_info['max_date'].iloc[0]),
+                    'unique_years': int(time_info['unique_years'].iloc[0]),
+                    'unique_quarters': int(time_info['unique_quarters'].iloc[0]),
+                    'available_years': available_years,
+                    'available_quarters': available_quarters
+                }
+
+            return metadata
+
+        except Exception as e:
+            logger.error(f"Failed to get dataset metadata: {str(e)}")
+            return {}
+
     def get_top_categories(self, limit: int = 10) -> pd.DataFrame:
         """Get top performing categories by revenue"""
         try:

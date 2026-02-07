@@ -58,6 +58,56 @@ st.markdown("""
         color: #666;
         font-style: italic;
     }
+
+    /* Right Sidebar - matches left sidebar styling */
+    .right-sidebar {
+        position: fixed;
+        right: 0;
+        top: 0;
+        height: 100vh;
+        width: 21rem;
+        background-color: #f0f2f6;
+        padding: 1rem 1rem;
+        overflow-y: auto;
+        overflow-x: hidden;
+        z-index: 999991;
+        transition: transform 0.3s ease-in-out;
+    }
+
+    .right-sidebar.collapsed {
+        transform: translateX(100%);
+    }
+
+    .right-sidebar-toggle {
+        position: fixed;
+        right: 21rem;
+        top: 50%;
+        transform: translateY(-50%);
+        z-index: 999992;
+        background-color: #667eea;
+        color: white;
+        border: none;
+        border-radius: 8px 0 0 8px;
+        padding: 12px 8px;
+        cursor: pointer;
+        font-size: 18px;
+        transition: right 0.3s ease-in-out;
+    }
+
+    .right-sidebar-toggle.collapsed {
+        right: 0;
+    }
+
+    /* Adjust main content when right sidebar is visible */
+    section[data-testid="stAppViewContainer"] > .main {
+        margin-right: 21rem;
+        transition: margin-right 0.3s ease-in-out;
+    }
+
+    section[data-testid="stAppViewContainer"] > .main.sidebar-collapsed {
+        margin-right: 0;
+    }
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -78,6 +128,78 @@ def initialize_orchestrator():
         model_name=model_name,
         data_path=data_path
     )
+
+
+def render_agent_status_native(container, current_agent=0, error_agent=None):
+    """Render agent status using native Streamlit components"""
+    agents = [
+        ("🔍 Query Resolution", "Analyzes user query & generates SQL"),
+        ("📊 Data Extraction", "Executes SQL & retrieves data"),
+        ("✅ Validation", "Validates data quality"),
+        ("💬 Response Generation", "Generates insights")
+    ]
+
+    with container.container():
+        # Container with border and styling
+        st.markdown("<div style='border: 2px solid #667eea; border-radius: 10px; padding: 15px; background: #f8f9fa;'>", unsafe_allow_html=True)
+
+        # Show idle state or processing state
+        if current_agent == 0:
+            # Idle/Ready state
+            st.markdown("""
+            <div style='text-align: center; padding: 30px 10px; color: #666;'>
+                <div style='font-size: 48px; margin-bottom: 10px;'>💤</div>
+                <div style='font-size: 16px; font-weight: bold; color: #667eea;'>Ready</div>
+                <div style='font-size: 12px; margin-top: 5px;'>Waiting for your query...</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            # Processing state - show all agents
+            for i, (name, description) in enumerate(agents, 1):
+                # Determine status
+                if error_agent and i == error_agent:
+                    icon = '🔴'
+                    status_text = 'ERROR'
+                    status_color = '#dc3545'
+                    bg_color = '#ffe6e6'
+                elif i < current_agent:
+                    icon = '✅'
+                    status_text = 'DONE'
+                    status_color = '#28a745'
+                    bg_color = '#e6f7e6'
+                elif i == current_agent:
+                    icon = '🟢'
+                    status_text = 'RUNNING'
+                    status_color = '#ffc107'
+                    bg_color = '#fff9e6'
+                else:
+                    icon = '⚪'
+                    status_text = 'WAITING'
+                    status_color = '#6c757d'
+                    bg_color = '#f8f9fa'
+
+                # Agent card - MUST be inside the loop
+                st.markdown(f"""
+                <div style='background: {bg_color}; padding: 10px; margin: 6px 0;
+                            border-left: 4px solid {status_color}; border-radius: 5px;'>
+                    <div style='display: flex; justify-content: space-between; align-items: center;'>
+                        <div>
+                            <span style='font-size: 18px;'>{icon}</span>
+                            <strong style='margin-left: 5px; font-size: 13px;'>Agent {i}</strong>
+                        </div>
+                        <span style='background: {status_color}; color: white; padding: 2px 8px;
+                                     border-radius: 8px; font-size: 10px; font-weight: bold;'>
+                            {status_text}
+                        </span>
+                    </div>
+                    <div style='margin-top: 4px; padding-left: 25px;'>
+                        <div style='font-weight: 600; font-size: 12px; color: #333;'>{name}</div>
+                        <div style='font-size: 10px; color: #666;'>{description}</div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def display_agent_workflow(metadata: dict):
@@ -201,6 +323,53 @@ def main():
         """)
 
         st.markdown("---")
+        st.markdown("### 🤖 Agent Pipeline")
+
+        with st.expander("🔍 **Agent 1: Query Resolution**", expanded=False):
+            st.markdown("""
+            **Purpose:** Converts natural language to SQL
+
+            **Tasks:**
+            - Analyzes user intent
+            - Maps to database schema
+            - Generates optimized SQL queries
+            - Handles date parsing & filters
+            """)
+
+        with st.expander("📊 **Agent 2: Data Extraction**", expanded=False):
+            st.markdown("""
+            **Purpose:** Executes queries & retrieves data
+
+            **Tasks:**
+            - Runs SQL on DuckDB
+            - Handles query errors
+            - Provides fallback data
+            - Adds dataset metadata
+            """)
+
+        with st.expander("✅ **Agent 3: Validation**", expanded=False):
+            st.markdown("""
+            **Purpose:** Validates results quality
+
+            **Tasks:**
+            - Checks data completeness
+            - Validates against query intent
+            - Assigns confidence scores
+            - Identifies data limitations
+            """)
+
+        with st.expander("💬 **Agent 4: Response Generation**", expanded=False):
+            st.markdown("""
+            **Purpose:** Creates insights & recommendations
+
+            **Tasks:**
+            - Generates business insights
+            - Explains data limitations
+            - Provides actionable advice
+            - Formats professional responses
+            """)
+
+        st.markdown("---")
         st.markdown("### 🔍 Example Questions")
         st.markdown("""
         - Which category has the highest sales?
@@ -212,13 +381,105 @@ def main():
 
     # Main content
     if mode == "💬 Conversational Q&A":
-        st.markdown("## 💬 Chat with Your Sales Data")
-
-        # Initialize session state for chat history
+        # Initialize session state for chat history and agent status
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
+        if 'agent_status' not in st.session_state:
+            st.session_state.agent_status = 0  # 0 = ready, 1-4 = processing, 5 = completed
+        if 'show_right_sidebar' not in st.session_state:
+            st.session_state.show_right_sidebar = True  # Default: show sidebar
 
-        # Chat container (scrollable area)
+        # Apply main content margin class based on sidebar state
+        sidebar_class = "" if st.session_state.show_right_sidebar else "sidebar-collapsed"
+        st.markdown(f'<script>document.querySelector("[data-testid=\\"stAppViewContainer\\"] > .main").classList.add("{sidebar_class}");</script>', unsafe_allow_html=True)
+
+        # RIGHT SIDEBAR - Fixed position (like left sidebar)
+        sidebar_collapsed_class = "" if st.session_state.show_right_sidebar else "collapsed"
+
+        st.markdown(f"""
+        <div class="right-sidebar {sidebar_collapsed_class}" id="right-sidebar">
+            <div style="margin-bottom: 1rem;">
+                <h3 style="margin: 0; color: #262730;">🔄 Agent Pipeline</h3>
+                <p style="font-size: 0.875rem; color: #808495; margin: 0.5rem 0;">Monitor real-time execution</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Render agent status in sidebar
+        status_container = st.container()
+
+        # Only render content if sidebar is visible
+        if st.session_state.show_right_sidebar:
+            with status_container:
+                # Create a container for the right sidebar content
+                st.markdown('<div id="right-sidebar-content">', unsafe_allow_html=True)
+
+                # Status placeholder
+                status_placeholder = st.empty()
+                render_agent_status_native(status_placeholder, st.session_state.agent_status)
+
+                st.markdown("---")
+
+                # Agent Details
+                st.markdown("### 📋 Multi-Agent System")
+
+                with st.expander("🔍 **Agent 1: Query Resolution**", expanded=False):
+                    st.markdown("""
+                    **Purpose:** Analyzes user query & generates SQL
+
+                    **Tasks:**
+                    - Understands natural language
+                    - Extracts intent & parameters
+                    - Generates optimized SQL
+                    - Handles complex queries
+                    """)
+
+                with st.expander("📊 **Agent 2: Data Extraction**", expanded=False):
+                    st.markdown("""
+                    **Purpose:** Executes SQL & retrieves data
+
+                    **Tasks:**
+                    - Runs queries on DuckDB
+                    - Handles query errors
+                    - Provides fallback data
+                    - Adds dataset metadata
+                    """)
+
+                with st.expander("✅ **Agent 3: Validation**", expanded=False):
+                    st.markdown("""
+                    **Purpose:** Validates data quality
+
+                    **Tasks:**
+                    - Checks data completeness
+                    - Validates against query intent
+                    - Assigns confidence scores
+                    - Identifies data limitations
+                    """)
+
+                with st.expander("💬 **Agent 4: Response Generation**", expanded=False):
+                    st.markdown("""
+                    **Purpose:** Creates insights & recommendations
+
+                    **Tasks:**
+                    - Generates business insights
+                    - Explains data limitations
+                    - Provides actionable advice
+                    - Formats professional responses
+                    """)
+
+                st.markdown('</div>', unsafe_allow_html=True)
+
+        # Toggle button for sidebar
+        toggle_collapsed_class = "" if st.session_state.show_right_sidebar else "collapsed"
+        toggle_icon = "👁️‍🗨️" if st.session_state.show_right_sidebar else "👁️"
+
+        if st.button(toggle_icon, key="btn_toggle_sidebar", help="Toggle Agent Panel"):
+            st.session_state.show_right_sidebar = not st.session_state.show_right_sidebar
+            st.rerun()
+
+        st.markdown("## 💬 Chat with Your Sales Data")
+
+        # MAIN CONTENT - Chat container
         chat_container = st.container()
 
         # Display chat history (chronological order - oldest first)
@@ -244,6 +505,12 @@ def main():
 
                     # Expandable details
                     with st.expander("🔍 View Details"):
+                        # Show SQL query if available
+                        if chat['result'].get('sql_query'):
+                            st.markdown("### 🔍 Generated SQL Query")
+                            st.code(chat['result']['sql_query'], language='sql')
+                            st.markdown("---")
+
                         display_agent_workflow(chat['result'].get('metadata', {}))
 
                         # Show extracted data if available
@@ -419,19 +686,52 @@ def main():
             st.rerun()
 
         if submit_button and user_query:
-            with st.spinner("🤖 Processing your query..."):
-                # Process query
+            import time
+
+            # Helper to update status panel using session state
+            def update_agent_status(agent_num, error_agent=None):
+                st.session_state.agent_status = agent_num
+                render_agent_status_native(status_placeholder, agent_num, error_agent)
+
+            # Show processing stages
+            update_agent_status(1)
+            time.sleep(0.3)
+
+            update_agent_status(2)
+            time.sleep(0.2)
+
+            # Process the actual query with error handling
+            try:
                 result = orchestrator.process_query(user_query, query_type="qa")
 
-                # Add to chat history
-                st.session_state.chat_history.append({
-                    'query': user_query,
-                    'result': result,
-                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                })
+                update_agent_status(3)
+                time.sleep(0.2)
+
+                update_agent_status(4)
+                time.sleep(0.2)
+
+                # Show all completed
+                update_agent_status(5)
+                time.sleep(1.5)
+
+                # Return to ready state
+                st.session_state.agent_status = 0
+            except Exception as e:
+                # Show error state on current agent
+                update_agent_status(2, error_agent=2)
+                st.error(f"❌ Error during processing: {str(e)}")
+                st.stop()
+
+            # Add to chat history
+            st.session_state.chat_history.append({
+                'query': user_query,
+                'result': result,
+                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
 
             # Rerun to show new message and clear input
             st.rerun()
+
 
     else:  # Summary Mode
         st.markdown("## 📋 Generate Comprehensive Sales Summary")
@@ -439,51 +739,170 @@ def main():
         st.info("Click the button below to generate a comprehensive summary of all sales data using the multi-agent system.")
 
         if st.button("📊 Generate Summary", type="primary"):
-            with st.spinner("🤖 Multi-agent system analyzing all data..."):
-                result = orchestrator.generate_summary()
+            # Create two columns: main content (70%) and status panel (30%)
+            col_main, col_status = st.columns([7, 3])
 
-            # Display summary
-            st.markdown('<div class="insight-box">', unsafe_allow_html=True)
-            st.markdown("### 🎯 Executive Summary")
-            st.markdown(result['response'])
-            st.markdown('</div>', unsafe_allow_html=True)
+            with col_status:
+                st.markdown("### 🔄 Agent Status")
+                status_placeholder = st.empty()
 
-            # Display agent workflow
-            st.markdown("---")
-            display_agent_workflow(result.get('metadata', {}))
+            # Status update function (reuse from Q&A mode)
+            def update_status(current_agent, error_agent=None):
+                agents = [
+                    ("🔍 Query Resolution", "Understanding summarization request"),
+                    ("📊 Data Extraction", "Gathering comprehensive statistics"),
+                    ("✅ Validation", "Validating data completeness"),
+                    ("💬 Response Generation", "Creating executive summary")
+                ]
 
-            # Display visualizations
-            if result.get('data'):
+                status_html = '''
+                <div style="
+                    position: sticky;
+                    top: 20px;
+                    padding: 16px;
+                    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+                    border-radius: 12px;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                    color: white;
+                ">
+                    <div style="font-weight: bold; font-size: 16px; margin-bottom: 16px; text-align: center;">
+                        🤖 Multi-Agent Pipeline
+                    </div>
+                '''
+
+                for i, (name, description) in enumerate(agents, 1):
+                    if error_agent and i == error_agent:
+                        icon = '🔴'
+                        status_badge = 'ERROR'
+                        badge_color = '#dc3545'
+                        opacity = '1.0'
+                        border = 'border-left: 4px solid #dc3545;'
+                    elif i < current_agent:
+                        icon = '✅'
+                        status_badge = 'DONE'
+                        badge_color = '#28a745'
+                        opacity = '0.75'
+                        border = 'border-left: 4px solid #28a745;'
+                    elif i == current_agent:
+                        icon = '🟢'
+                        status_badge = 'RUNNING'
+                        badge_color = '#ffc107'
+                        opacity = '1.0'
+                        border = 'border-left: 4px solid #4CAF50;'
+                    else:
+                        icon = '⚪'
+                        status_badge = 'WAITING'
+                        badge_color = '#6c757d'
+                        opacity = '0.5'
+                        border = 'border-left: 4px solid #6c757d;'
+
+                    status_html += f'''
+                    <div style="
+                        padding: 12px;
+                        margin: 8px 0;
+                        background: rgba(255,255,255,0.15);
+                        border-radius: 8px;
+                        opacity: {opacity};
+                        {border}
+                        transition: all 0.3s ease;
+                    ">
+                        <div style="display: flex; align-items: flex-start; justify-content: space-between;">
+                            <div style="display: flex; align-items: flex-start; flex: 1;">
+                                <span style="font-size: 20px; margin-right: 10px; margin-top: 2px;">{icon}</span>
+                                <div style="flex: 1;">
+                                    <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">
+                                        Agent {i}
+                                    </div>
+                                    <div style="font-size: 13px; font-weight: 600; margin-bottom: 3px;">
+                                        {name}
+                                    </div>
+                                    <div style="font-size: 11px; opacity: 0.9; line-height: 1.4;">
+                                        {description}
+                                    </div>
+                                </div>
+                            </div>
+                            <span style="
+                                background: {badge_color};
+                                padding: 4px 10px;
+                                border-radius: 12px;
+                                font-size: 9px;
+                                font-weight: bold;
+                                white-space: nowrap;
+                                margin-left: 8px;
+                            ">{status_badge}</span>
+                        </div>
+                    </div>
+                    '''
+
+                status_html += '</div>'
+                status_placeholder.markdown(status_html, unsafe_allow_html=True)
+
+            import time
+
+            with col_main:
+                update_status(1)
+                time.sleep(0.3)
+
+                update_status(2)
+                time.sleep(0.2)
+
+                try:
+                    result = orchestrator.generate_summary()
+
+                    update_status(3)
+                    time.sleep(0.2)
+
+                    update_status(4)
+                    time.sleep(0.2)
+
+                    update_status(5)
+                except Exception as e:
+                    update_status(2, error_agent=2)
+                    st.error(f"❌ Error during processing: {str(e)}")
+                    st.stop()
+
+                # Display summary
+                st.markdown('<div class="insight-box">', unsafe_allow_html=True)
+                st.markdown("### 🎯 Executive Summary")
+                st.markdown(result['response'])
+                st.markdown('</div>', unsafe_allow_html=True)
+
+                # Display agent workflow
                 st.markdown("---")
-                display_summary_visualizations(result['data'])
+                display_agent_workflow(result.get('metadata', {}))
 
-                # Display detailed statistics
-                with st.expander("📊 View Detailed Statistics"):
-                    summary_stats = result['data'].get('summary_statistics', {})
+                # Display visualizations
+                if result.get('data'):
+                    st.markdown("---")
+                    display_summary_visualizations(result['data'])
 
-                    if 'amazon_sales' in summary_stats:
-                        st.markdown("#### Amazon Sales Statistics")
-                        amazon_stats = summary_stats['amazon_sales']
+                    # Display detailed statistics
+                    with st.expander("📊 View Detailed Statistics"):
+                        summary_stats = result['data'].get('summary_statistics', {})
 
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Total Orders", f"{amazon_stats.get('total_orders', 0):,}")
-                        with col2:
-                            st.metric("Total Revenue", f"₹{amazon_stats.get('total_revenue', 0):,.2f}")
-                        with col3:
-                            st.metric("Avg Order Value", f"₹{amazon_stats.get('avg_order_value', 0):,.2f}")
+                        if 'amazon_sales' in summary_stats:
+                            st.markdown("#### Amazon Sales Statistics")
+                            amazon_stats = summary_stats['amazon_sales']
 
-                    if 'international_sales' in summary_stats:
-                        st.markdown("#### International Sales Statistics")
-                        intl_stats = summary_stats['international_sales']
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Total Orders", f"{amazon_stats.get('total_orders', 0):,}")
+                            with col2:
+                                st.metric("Total Revenue", f"₹{amazon_stats.get('total_revenue', 0):,.2f}")
+                            with col3:
+                                st.metric("Avg Order Value", f"₹{amazon_stats.get('avg_order_value', 0):,.2f}")
 
-                        col1, col2, col3 = st.columns(3)
-                        with col1:
-                            st.metric("Total Transactions", f"{intl_stats.get('total_transactions', 0):,}")
-                        with col2:
-                            st.metric("Total Revenue", f"₹{intl_stats.get('total_revenue', 0):,.2f}")
-                        with col3:
-                            st.metric("Unique Customers", f"{intl_stats.get('unique_customers', 0):,}")
+                        if 'international_sales' in summary_stats:
+                            st.markdown("#### International Sales Statistics")
+                            intl_stats = summary_stats['international_sales']
+
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Total Transactions", f"{intl_stats.get('total_transactions', 0):,}")
+                            with col2:
+                                st.metric("Total Revenue", f"₹{intl_stats.get('total_revenue', 0):,.2f}")
+                            with col3:
+                                st.metric("Unique Customers", f"{intl_stats.get('unique_customers', 0):,}")
 
 
 if __name__ == "__main__":

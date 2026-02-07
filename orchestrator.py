@@ -103,11 +103,25 @@ class RetailInsightsOrchestrator:
             # Execute the workflow
             final_state = self.workflow.invoke(initial_state)
 
+            # Print SQL query to terminal for debugging
+            sql_query = final_state.get("sql_query")
+            if sql_query:
+                print("\n" + "=" * 80)
+                print("🔍 GENERATED SQL QUERY:")
+                print("=" * 80)
+                print(sql_query)
+                print("=" * 80 + "\n")
+            else:
+                print("\n" + "=" * 80)
+                print("⚠️  No SQL query generated (complex query or summarization)")
+                print("=" * 80 + "\n")
+
             # Prepare response
             response = {
                 "query": user_query,
                 "response": final_state.get("final_response", "No response generated"),
                 "query_type": final_state.get("query_type", "unknown"),
+                "sql_query": sql_query,  # Include SQL in response
                 "data": final_state.get("extracted_data"),
                 "validation": final_state.get("validation_result"),
                 "metadata": final_state.get("metadata", {}),
