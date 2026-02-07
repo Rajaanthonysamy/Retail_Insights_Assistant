@@ -4,7 +4,6 @@ Implements: Query Resolution Agent, Data Extraction Agent, Validation Agent
 """
 from typing import TypedDict, Annotated, List, Dict, Any, Optional
 from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
 from langchain.schema import HumanMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 import operator
