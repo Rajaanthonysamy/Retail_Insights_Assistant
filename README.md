@@ -334,9 +334,6 @@ Key prompt strategies used:
 - **Context preservation** across agents
 - **Temperature control** for consistency
 
-## 📄 License
-
-This project is created for the Blend360 GenAI Interview Assignment.
 
 ## 👥 Contact
 
