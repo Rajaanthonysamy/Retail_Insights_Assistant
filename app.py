@@ -10,6 +10,7 @@ from orchestrator import RetailInsightsOrchestrator
 import os
 from dotenv import load_dotenv
 import json
+import base64
 from datetime import datetime
 
 # Load environment variables
@@ -71,6 +72,32 @@ st.markdown("""
 
 </style>
 """, unsafe_allow_html=True)
+
+
+@st.dialog("System Architecture", width="large")
+def show_architecture():
+    """Display ARCHITECTURE.md content in a dialog"""
+    arch_path = os.path.join(os.path.dirname(__file__), "ARCHITECTURE.md")
+    if os.path.exists(arch_path):
+        with open(arch_path, "r") as f:
+            arch_content = f.read()
+        st.markdown(arch_content)
+    else:
+        st.warning("ARCHITECTURE.md file not found.")
+
+
+@st.dialog("Retail Insight Analysis", width="large")
+def show_pdf_report():
+    """Display PDF report in a dialog using embedded viewer"""
+    pdf_path = os.path.join(os.path.dirname(__file__), "Retail_Insight_Analysis.pdf")
+    if os.path.exists(pdf_path):
+        with open(pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+        b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
+        pdf_iframe = f'<iframe src="data:application/pdf;base64,{b64_pdf}" width="100%" height="600" type="application/pdf"></iframe>'
+        st.markdown(pdf_iframe, unsafe_allow_html=True)
+    else:
+        st.warning("Retail_Insight_Analysis.pdf file not found.")
 
 
 def get_api_key():
@@ -364,6 +391,15 @@ def main():
         - Which region saw the most orders?
         - What are the sales trends?
         """)
+
+        st.markdown("---")
+        st.markdown("### 📄 Documentation")
+
+        if st.button("📐 View Architecture", width="stretch", key="btn_arch"):
+            show_architecture()
+
+        if st.button("📊 View Analysis Report", width="stretch", key="btn_pdf"):
+            show_pdf_report()
 
     # Initialize orchestrator (only when API key is available)
     api_key = get_api_key()
