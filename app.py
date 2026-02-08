@@ -228,7 +228,7 @@ def display_summary_visualizations(data: dict):
                 color='total_revenue',
                 color_continuous_scale='blues'
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
     # Regional Performance Chart
     if 'regional_performance' in data and data['regional_performance']:
@@ -245,7 +245,7 @@ def display_summary_visualizations(data: dict):
                 color='order_count',
                 color_continuous_scale='viridis'
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
 
 
 def main():
@@ -501,7 +501,7 @@ def main():
                                 tab1, tab2 = st.tabs(["📋 Table View", "📈 Chart View"])
 
                                 with tab1:
-                                    st.dataframe(df, use_container_width=True)
+                                    st.dataframe(df, width="stretch")
 
                                 with tab2:
                                     # Dynamic chart selection based on data characteristics
@@ -530,7 +530,7 @@ def main():
                                                 markers=True
                                             )
                                             fig.update_layout(hovermode='x unified')
-                                            st.plotly_chart(fig, use_container_width=True)
+                                            st.plotly_chart(fig, width="stretch")
                                             chart_created = True
 
                                         # 2. PROPORTIONS: Pie chart for 2-8 categories
@@ -546,7 +546,7 @@ def main():
                                                 hole=0.3  # Donut chart
                                             )
                                             fig.update_traces(textposition='inside', textinfo='percent+label')
-                                            st.plotly_chart(fig, use_container_width=True)
+                                            st.plotly_chart(fig, width="stretch")
                                             chart_created = True
 
                                         # 3. RANKINGS: Horizontal bar chart for many categories (better readability)
@@ -567,7 +567,7 @@ def main():
                                                 color=num_col,
                                                 color_continuous_scale='blues'
                                             )
-                                            st.plotly_chart(fig, use_container_width=True)
+                                            st.plotly_chart(fig, width="stretch")
                                             chart_created = True
 
                                         # 4. COMPARISON: Vertical bar chart for fewer categories
@@ -585,7 +585,7 @@ def main():
                                                 color_continuous_scale='viridis'
                                             )
                                             fig.update_layout(xaxis_tickangle=-45)
-                                            st.plotly_chart(fig, use_container_width=True)
+                                            st.plotly_chart(fig, width="stretch")
                                             chart_created = True
 
                                         # 5. MULTI-METRIC: Grouped bar chart for multiple metrics
@@ -601,7 +601,7 @@ def main():
                                                 labels={first_col: first_col}
                                             )
                                             fig.update_layout(xaxis_tickangle=-45)
-                                            st.plotly_chart(fig, use_container_width=True)
+                                            st.plotly_chart(fig, width="stretch")
                                             chart_created = True
 
                                         # 6. CORRELATION: Scatter plot for 2 numeric columns with categorical
@@ -617,7 +617,7 @@ def main():
                                                 title=f"{numeric_cols[1]} vs {numeric_cols[0]}",
                                                 labels={numeric_cols[0]: numeric_cols[0], numeric_cols[1]: numeric_cols[1]}
                                             )
-                                            st.plotly_chart(fig, use_container_width=True)
+                                            st.plotly_chart(fig, width="stretch")
                                             chart_created = True
 
                                         # 7. SINGLE VALUE: Display as metric
@@ -655,7 +655,7 @@ def main():
                     label_visibility="collapsed"
                 )
             with input_col2:
-                submit_button = st.button("🚀 Send", type="primary", use_container_width=True)
+                submit_button = st.button("🚀 Send", type="primary", width="stretch")
 
             if st.button("🗑️ Clear Chat History"):
                 st.session_state.chat_history = []
@@ -678,7 +678,15 @@ def main():
 
                 # Process the actual query with error handling
                 try:
-                    result = orchestrator.process_query(user_query, query_type="qa")
+                    # Build conversation history from chat for follow-up context
+                    conv_history = [
+                        {"query": chat['query'], "response": chat['result']['response']}
+                        for chat in st.session_state.chat_history
+                    ]
+                    result = orchestrator.process_query(
+                        user_query, query_type="qa",
+                        conversation_history=conv_history
+                    )
 
                     update_agent_status(3)
                     time.sleep(0.2)
@@ -722,96 +730,9 @@ def main():
                 st.markdown("### 🔄 Agent Status")
                 status_placeholder = st.empty()
 
-            # Status update function (reuse from Q&A mode)
+            # Reuse the same native rendering function from Q&A mode
             def update_status(current_agent, error_agent=None):
-                agents = [
-                    ("🔍 Query Resolution", "Understanding summarization request"),
-                    ("📊 Data Extraction", "Gathering comprehensive statistics"),
-                    ("✅ Validation", "Validating data completeness"),
-                    ("💬 Response Generation", "Creating executive summary")
-                ]
-
-                status_html = '''
-                <div style="
-                    position: sticky;
-                    top: 20px;
-                    padding: 16px;
-                    background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-                    border-radius: 12px;
-                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-                    color: white;
-                ">
-                    <div style="font-weight: bold; font-size: 16px; margin-bottom: 16px; text-align: center;">
-                        🤖 Multi-Agent Pipeline
-                    </div>
-                '''
-
-                for i, (name, description) in enumerate(agents, 1):
-                    if error_agent and i == error_agent:
-                        icon = '🔴'
-                        status_badge = 'ERROR'
-                        badge_color = '#dc3545'
-                        opacity = '1.0'
-                        border = 'border-left: 4px solid #dc3545;'
-                    elif i < current_agent:
-                        icon = '✅'
-                        status_badge = 'DONE'
-                        badge_color = '#28a745'
-                        opacity = '0.75'
-                        border = 'border-left: 4px solid #28a745;'
-                    elif i == current_agent:
-                        icon = '🟢'
-                        status_badge = 'RUNNING'
-                        badge_color = '#ffc107'
-                        opacity = '1.0'
-                        border = 'border-left: 4px solid #4CAF50;'
-                    else:
-                        icon = '⚪'
-                        status_badge = 'WAITING'
-                        badge_color = '#6c757d'
-                        opacity = '0.5'
-                        border = 'border-left: 4px solid #6c757d;'
-
-                    status_html += f'''
-                    <div style="
-                        padding: 12px;
-                        margin: 8px 0;
-                        background: rgba(255,255,255,0.15);
-                        border-radius: 8px;
-                        opacity: {opacity};
-                        {border}
-                        transition: all 0.3s ease;
-                    ">
-                        <div style="display: flex; align-items: flex-start; justify-content: space-between;">
-                            <div style="display: flex; align-items: flex-start; flex: 1;">
-                                <span style="font-size: 20px; margin-right: 10px; margin-top: 2px;">{icon}</span>
-                                <div style="flex: 1;">
-                                    <div style="font-weight: 700; font-size: 14px; margin-bottom: 4px;">
-                                        Agent {i}
-                                    </div>
-                                    <div style="font-size: 13px; font-weight: 600; margin-bottom: 3px;">
-                                        {name}
-                                    </div>
-                                    <div style="font-size: 11px; opacity: 0.9; line-height: 1.4;">
-                                        {description}
-                                    </div>
-                                </div>
-                            </div>
-                            <span style="
-                                background: {badge_color};
-                                padding: 4px 10px;
-                                border-radius: 12px;
-                                font-size: 9px;
-                                font-weight: bold;
-                                white-space: nowrap;
-                                margin-left: 8px;
-                            ">{status_badge}</span>
-                        </div>
-                    </div>
-                    '''
-
-                status_html += '</div>'
-                status_placeholder.markdown(status_html, unsafe_allow_html=True)
+                render_agent_status_native(status_placeholder, current_agent, error_agent)
 
             import time
 

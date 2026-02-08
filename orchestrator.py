@@ -12,7 +12,7 @@ from agents import (
 )
 from data_processor import DataProcessor
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -73,13 +73,15 @@ class RetailInsightsOrchestrator:
         # Compile the workflow
         return workflow.compile()
 
-    def process_query(self, user_query: str, query_type: str = "auto") -> Dict[str, Any]:
+    def process_query(self, user_query: str, query_type: str = "auto",
+                      conversation_history: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
         """
         Process a user query through the multi-agent system
 
         Args:
             user_query: Natural language query from user
             query_type: 'summarization', 'qa', or 'auto' to detect automatically
+            conversation_history: List of prior Q&A pairs [{"query": ..., "response": ...}]
 
         Returns:
             Dictionary containing final response and metadata
@@ -90,6 +92,7 @@ class RetailInsightsOrchestrator:
         initial_state: AgentState = {
             "user_query": user_query,
             "query_type": query_type if query_type != "auto" else "",
+            "conversation_history": conversation_history or [],
             "structured_query": None,
             "sql_query": None,
             "extracted_data": None,

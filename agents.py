@@ -20,6 +20,7 @@ class AgentState(TypedDict):
     """State shared across all agents"""
     user_query: str
     query_type: str  # 'summarization' or 'qa'
+    conversation_history: Optional[List[Dict[str, str]]]  # Prior Q&A pairs for follow-ups
     structured_query: Optional[str]
     sql_query: Optional[str]
     extracted_data: Optional[Dict[str, Any]]
@@ -38,6 +39,23 @@ class QueryResolutionAgent:
         self.llm = llm
         self.data_processor = data_processor
         self.name = "QueryResolutionAgent"
+
+    def _format_conversation_history(self, history: list) -> str:
+        """Format recent conversation history for the LLM prompt"""
+        if not history:
+            return "No prior conversation."
+        # Keep last 5 exchanges to stay within token limits
+        recent = history[-5:]
+        formatted = []
+        for i, exchange in enumerate(recent, 1):
+            formatted.append(f"  Turn {i}:")
+            formatted.append(f"    User: {exchange.get('query', '')}")
+            # Truncate long responses
+            resp = exchange.get('response', '')
+            if len(resp) > 200:
+                resp = resp[:200] + "..."
+            formatted.append(f"    Assistant: {resp}")
+        return "\n".join(formatted)
 
     def run(self, state: AgentState) -> AgentState:
         """
@@ -133,6 +151,11 @@ Common Query Patterns:
 
 For SUMMARIZATION queries: Set query_type to "summarization" and sql_query to null
 For Q&A queries: Generate a valid, executable DuckDB SQL query
+
+CONVERSATION CONTEXT (for follow-up questions):
+If the user refers to previous context (e.g., "what about by state?", "show me more details", "break that down by month"),
+use the conversation history below to understand what they are referring to and generate the correct SQL.
+{self._format_conversation_history(state.get('conversation_history', []))}
 
 Return ONLY a JSON object (no markdown, no explanation):
 {{
@@ -452,7 +475,20 @@ class ResponseGenerationAgent:
             empty_result = extracted_data.get('empty_result', False)
             dataset_metadata = extracted_data.get('dataset_metadata', {})
 
-            system_prompt = """You are a Retail Analytics Expert creating insights for business executives.
+            # Build conversation context for follow-up awareness
+            conv_history = state.get('conversation_history', [])
+            conv_context = ""
+            if conv_history:
+                recent = conv_history[-3:]
+                turns = []
+                for ex in recent:
+                    resp = ex.get('response', '')
+                    if len(resp) > 300:
+                        resp = resp[:300] + "..."
+                    turns.append(f"  User: {ex.get('query', '')}\n  Assistant: {resp}")
+                conv_context = "\n\nCONVERSATION HISTORY (for follow-up context):\n" + "\n".join(turns)
+
+            system_prompt = f"""You are a Retail Analytics Expert creating insights for business executives.
 
 Your task is to generate clear, concise, and actionable insights based on the extracted data.
 
@@ -465,6 +501,8 @@ Guidelines:
 6. If query returned empty results, EXPLAIN WHY using dataset metadata
 7. If the exact query couldn't be answered, provide the most relevant alternative insights
 8. ALWAYS provide what you CAN show from the data
+9. If this is a follow-up question, maintain context from the conversation history
+{conv_context}
 
 Format your response in a professional, easy-to-read manner."""
 

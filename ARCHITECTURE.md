@@ -1,666 +1,470 @@
-# 🏗️ Scalability Architecture for 100GB+ Datasets
+# Retail Insights Assistant - Architecture Document
 
 ## Executive Summary
 
-This document outlines the scalable architecture design for the Retail Insights Assistant when handling datasets exceeding 100GB. The architecture addresses data engineering, storage, retrieval efficiency, model orchestration, and monitoring requirements.
+The Retail Insights Assistant is a **Multi-Agent GenAI System** for sales analytics. It uses a 4-agent LangGraph pipeline powered by OpenAI GPT-4 to convert natural language questions into SQL queries, extract data from DuckDB, validate results, and generate business-friendly insights. The system features a Streamlit web interface with real-time agent status monitoring, interactive visualizations, and cloud-ready deployment.
 
 ---
 
-## 📊 Current vs. Scalable Architecture
-
-### Current Implementation (< 10GB)
-- **Data Storage**: In-memory DuckDB
-- **Processing**: Single-machine pandas/DuckDB
-- **LLM**: Direct OpenAI API calls
-- **UI**: Single Streamlit instance
-
-### Scalable Architecture (100GB+)
-- **Data Storage**: Cloud data warehouse + data lake
-- **Processing**: Distributed computing (PySpark/Dask)
-- **LLM**: Cached, load-balanced API calls
-- **UI**: Containerized, horizontally scalable
-
----
-
-## 🔧 A. Data Engineering & Preprocessing
-
-### 1. Data Ingestion Pipeline
-
-#### Batch Processing
-```
-Raw CSV Files → Cloud Storage → ETL Pipeline → Data Warehouse
-     ↓              ↓                ↓              ↓
-  S3/GCS      Staging Layer    PySpark/Dask    BigQuery/Snowflake
-```
-
-**Technologies:**
-- **Apache Airflow**: Orchestrate ETL workflows
-- **PySpark**: Distributed data processing
-- **AWS Glue / Azure Data Factory**: Managed ETL service
-- **Dask**: Python-native distributed computing
-
-#### Streaming Processing (Optional)
-For real-time data:
-```
-Kafka/Kinesis → Spark Streaming → Real-time Analytics Layer
-```
-
-### 2. Data Cleaning & Preprocessing
-
-**PySpark Implementation Example:**
-```python
-from pyspark.sql import SparkSession
-
-spark = SparkSession.builder \
-    .appName("RetailDataETL") \
-    .config("spark.sql.adaptive.enabled", "true") \
-    .getOrCreate()
-
-# Read massive CSV
-df = spark.read.csv("s3://retail-data/sales/*.csv", header=True, inferSchema=True)
-
-# Clean and transform
-df_cleaned = df \
-    .dropna(subset=['Order ID', 'Amount']) \
-    .withColumn('Order_Date', to_date('Date', 'MM-dd-yy')) \
-    .withColumn('Year', year('Order_Date')) \
-    .withColumn('Quarter', quarter('Order_Date'))
-
-# Write to optimized format
-df_cleaned.write \
-    .partitionBy('Year', 'Quarter') \
-    .mode('overwrite') \
-    .parquet("s3://retail-data/processed/")
-```
-
-### 3. Data Partitioning Strategy
-
-**Time-based Partitioning:**
-```
-/retail_data/
-  /year=2022/
-    /quarter=Q1/
-    /quarter=Q2/
-  /year=2023/
-    /quarter=Q1/
-```
-
-**Benefits:**
-- Query only relevant partitions
-- Parallel processing across partitions
-- Easier data lifecycle management
-
----
-
-## 💾 B. Storage & Indexing
-
-### 1. Multi-Tier Storage Architecture
+## System Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────┐
-│          Query Layer (Fast Access)              │
-│  BigQuery / Snowflake / Databricks SQL          │
-└─────────────────┬───────────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────────┐
-│      Analytical Layer (Optimized Storage)       │
-│  Delta Lake / Parquet Files / Iceberg           │
-└─────────────────┬───────────────────────────────┘
-                  │
-┌─────────────────▼───────────────────────────────┐
-│        Data Lake (Raw Storage)                  │
-│  S3 / Azure Data Lake / Google Cloud Storage    │
-└─────────────────────────────────────────────────┘
-```
-
-### 2. Recommended Technologies
-
-#### Cloud Data Warehouse (Primary)
-**Google BigQuery:**
-- Serverless, auto-scaling
-- Columnar storage
-- Built-in ML capabilities
-- Pay-per-query pricing
-
-**Snowflake:**
-- Separation of compute and storage
-- Automatic optimization
-- Data sharing capabilities
-
-#### Data Lake (Raw Storage)
-**AWS S3 / GCS:**
-- Cost-effective for raw data
-- Unlimited scalability
-- Integration with processing frameworks
-
-#### Analytical Layer
-**Delta Lake:**
-```python
-# Write data with Delta Lake
-df.write \
-    .format("delta") \
-    .mode("overwrite") \
-    .option("mergeSchema", "true") \
-    .partitionBy("year", "quarter") \
-    .save("/delta/retail_sales")
-
-# Query with time travel
-df_historical = spark.read \
-    .format("delta") \
-    .option("versionAsOf", "2023-01-01") \
-    .load("/delta/retail_sales")
-```
-
-**Benefits:**
-- ACID transactions
-- Time travel (versioning)
-- Schema evolution
-- Efficient updates/deletes
-
-### 3. Indexing Strategy
-
-**Primary Indices:**
-- Order ID, Transaction ID (unique identifiers)
-- Date fields (for time-based queries)
-- Category, Region (for filtering)
-
-**Secondary Indices:**
-- Customer ID
-- Product SKU
-- State/City
-
-**Materialized Views:**
-```sql
-CREATE MATERIALIZED VIEW mv_sales_summary AS
-SELECT
-    DATE_TRUNC('month', order_date) as month,
-    category,
-    region,
-    SUM(amount) as total_revenue,
-    COUNT(*) as order_count
-FROM sales_data
-GROUP BY 1, 2, 3;
+                              User (Browser)
+                                   |
+                          +--------v--------+
+                          |   Streamlit UI   |
+                          |    (app.py)      |
+                          +--------+---------+
+                                   |
+                    +--------------v--------------+
+                    |   RetailInsightsOrchestrator |
+                    |      (orchestrator.py)       |
+                    +--------------+--------------+
+                                   |
+                          LangGraph StateGraph
+                                   |
+        +----------+----------+----------+----------+
+        |          |          |          |          |
+        v          v          v          v          |
+   +---------+ +---------+ +---------+ +---------+ |
+   | Agent 1 | | Agent 2 | | Agent 3 | | Agent 4 | |
+   | Query   | | Data    | | Valid-  | | Response| |
+   | Resoln. | | Extract | | ation   | | Gen.    | |
+   +---------+ +---------+ +---------+ +---------+ |
+        |          |                                |
+        v          v                                |
+   +---------+ +---------+                          |
+   | OpenAI  | | DuckDB  |                          |
+   | GPT-4   | | Engine  |                          |
+   +---------+ +---------+                          |
+                   |                                |
+              +----v----+                           |
+              | CSV Data |                          |
+              | (3 files)|                          |
+              +----------+                          |
 ```
 
 ---
 
-## 🔍 C. Retrieval & Query Efficiency
+## Component Architecture
 
-### 1. Query Optimization Strategies
+### 1. Streamlit UI Layer (`app.py` - 884 lines)
 
-#### A. Metadata-Based Filtering
+The web interface built with Streamlit providing:
+
+**Layout Structure:**
+- **Left Sidebar (st.sidebar):**
+  - API Key input (password field, session-only storage)
+  - Mode selection: Conversational Q&A / Generate Summary
+  - Example questions for user guidance
+- **Main Content Area (70% width):**
+  - Chat interface with message history (Q&A mode)
+  - Executive summary with metrics (Summary mode)
+  - Expandable details: SQL query, data tables, interactive charts
+- **Right Panel (30% width, column-based):**
+  - Real-time Agent Pipeline status
+  - Color-coded agent status badges (Ready/Running/Done/Waiting/Error)
+  - Collapsible agent detail cards
+
+**Key Features:**
+- `get_api_key()`: Retrieves API key from `st.session_state` only (not `.env`)
+- `@st.cache_resource` on `initialize_orchestrator()`: Caches orchestrator per API key
+- `render_agent_status_native()`: Live agent status with HTML/CSS rendering
+- Smart Visualization Engine: Auto-selects chart type based on data characteristics
+  - Time series data -> Line chart
+  - 2-8 categories -> Donut chart
+  - 8+ categories -> Horizontal bar chart
+  - Single value -> Metric card
+  - Multiple metrics -> Grouped bar chart
+  - Two numeric columns -> Scatter plot
+- `st.columns([7, 3])` layout for main content + agent sidebar
+
+**State Management:**
+- `st.session_state.chat_history`: Persists chat messages within session
+- `st.session_state.agent_status`: Tracks current agent (0=ready, 1-4=processing)
+- `st.session_state.openai_api_key`: Session-only API key storage
+
+---
+
+### 2. LangGraph Orchestrator (`orchestrator.py` - 166 lines)
+
+**Class: `RetailInsightsOrchestrator`**
+
+Coordinates the multi-agent workflow using LangGraph's StateGraph.
+
+**Initialization:**
 ```python
-class SmartQueryEngine:
-    def __init__(self):
-        self.metadata_index = {
-            'date_ranges': {},
-            'category_stats': {},
-            'region_stats': {}
-        }
-
-    def filter_partitions(self, query_params):
-        """Only scan relevant partitions"""
-        partitions = []
-
-        if 'date_range' in query_params:
-            partitions = self.get_partitions_by_date(
-                query_params['date_range']
-            )
-
-        return partitions
-```
-
-#### B. Semantic Search with Vector Embeddings
-
-**Architecture:**
-```
-User Query → Embedding Model → Vector Search → Relevant Data Chunks
-                                    ↓
-                              FAISS/Pinecone
-```
-
-**Implementation:**
-```python
-from langchain.embeddings import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
-
-# Create embeddings for data summaries
-embeddings = OpenAIEmbeddings()
-
-# Pre-computed summaries of data partitions
-partition_summaries = [
-    "Q1 2022 sales data: Electronics category, Western region",
-    "Q2 2022 sales data: Clothing category, Eastern region",
-    # ... more summaries
-]
-
-# Create vector store
-vector_store = FAISS.from_texts(partition_summaries, embeddings)
-
-# Query
-relevant_partitions = vector_store.similarity_search(
-    "Show me electronics sales in Q1",
-    k=3
+RetailInsightsOrchestrator(
+    api_key: str,           # OpenAI API key (from UI)
+    model_name: str,        # Default: "gpt-4-turbo-preview"
+    data_path: str          # Default: "Sales Dataset/"
 )
 ```
 
-### 2. RAG (Retrieval-Augmented Generation) Pattern
+**Components Initialized:**
+- `ChatOpenAI` LLM instance (temperature=0.1)
+- `DataProcessor` for DuckDB operations
+- 4 Agent instances (Query, Extraction, Validation, Response)
+- Compiled LangGraph workflow
 
-**Enhanced Architecture:**
+**Workflow Graph:**
 ```
-┌──────────────┐
-│  User Query  │
-└──────┬───────┘
-       │
-       ▼
-┌─────────────────────┐
-│ Query Resolution    │
-│ Agent               │
-└──────┬──────────────┘
-       │
-       ▼
-┌─────────────────────┐      ┌──────────────────┐
-│ Semantic Search     │◄─────│  Vector Store    │
-│ (Embeddings)        │      │  (FAISS/Pinecone)│
-└──────┬──────────────┘      └──────────────────┘
-       │
-       ▼
-┌─────────────────────┐      ┌──────────────────┐
-│ Data Extraction     │◄─────│  Data Warehouse  │
-│ Agent (SQL Query)   │      │  (BigQuery)      │
-└──────┬──────────────┘      └──────────────────┘
-       │
-       ▼
-┌─────────────────────┐
-│ LLM Response        │
-│ Generation          │
-└─────────────────────┘
+Entry -> query_resolution -> data_extraction -> validation -> response_generation -> END
 ```
 
-**Code Example:**
+- Sequential flow (no branching) for reliability
+- Each node is an agent's `run()` method
+- State passed via `AgentState` TypedDict
+
+**Public Methods:**
+- `process_query(user_query, query_type)`: Process a single NL query
+- `generate_summary()`: Generate comprehensive summary across all datasets
+- `close()`: Clean up resources
+
+**Response Format:**
 ```python
-from langchain.chains import RetrievalQA
-from langchain.llms import OpenAI
-
-# Create retrieval chain
-qa_chain = RetrievalQA.from_chain_type(
-    llm=OpenAI(temperature=0),
-    chain_type="stuff",
-    retriever=vector_store.as_retriever(search_kwargs={"k": 5}),
-    return_source_documents=True
-)
-
-# Query with context
-result = qa_chain({
-    "query": "What were the top selling categories in Q4 2022?"
-})
-```
-
-### 3. Query Result Caching
-
-**Redis-based Caching:**
-```python
-import redis
-import hashlib
-import json
-
-class QueryCache:
-    def __init__(self):
-        self.redis_client = redis.Redis(host='localhost', port=6379)
-        self.ttl = 3600  # 1 hour
-
-    def get_cached_result(self, query: str):
-        query_hash = hashlib.md5(query.encode()).hexdigest()
-        cached = self.redis_client.get(query_hash)
-
-        if cached:
-            return json.loads(cached)
-        return None
-
-    def cache_result(self, query: str, result: dict):
-        query_hash = hashlib.md5(query.encode()).hexdigest()
-        self.redis_client.setex(
-            query_hash,
-            self.ttl,
-            json.dumps(result)
-        )
+{
+    "query": str,           # Original user query
+    "response": str,        # Generated natural language response
+    "query_type": str,      # "qa" | "summarization" | "error"
+    "sql_query": str,       # Generated SQL (logged to terminal)
+    "data": dict,           # Extracted data (tables, charts)
+    "validation": dict,     # Validation results + confidence
+    "metadata": dict,       # Per-agent success/failure tracking
+    "errors": list,         # Error messages from pipeline
+    "success": bool         # Overall success flag
+}
 ```
 
 ---
 
-## 🤖 D. Model Orchestration
+### 3. Agent System (`agents.py` - 541 lines)
 
-### 1. LLM Query Optimization
-
-#### Prompt Caching
+**Shared State: `AgentState` (TypedDict)**
 ```python
-from functools import lru_cache
-
-@lru_cache(maxsize=1000)
-def get_system_prompt(query_type: str) -> str:
-    """Cache system prompts"""
-    return SYSTEM_PROMPTS.get(query_type)
+class AgentState(TypedDict):
+    user_query: str
+    query_type: str                        # "summarization" | "qa"
+    structured_query: Optional[str]
+    sql_query: Optional[str]
+    extracted_data: Optional[Dict]
+    validation_result: Optional[Dict]
+    final_response: Optional[str]
+    errors: Annotated[List[str], operator.add]  # Accumulated errors
+    metadata: Dict[str, Any]                     # Per-agent metadata
 ```
 
-#### Batch Processing
+#### Agent 1: QueryResolutionAgent
+**Purpose:** Converts natural language to SQL
+
+**Process:**
+1. Retrieves table schemas, sample data, and value examples via `DataProcessor`
+2. Constructs a rich system prompt with:
+   - Full database context (schemas, row counts, sample values)
+   - DuckDB-specific SQL rules (column quoting, date functions)
+   - YoY/growth rate query patterns with dynamic parameter extraction
+   - Common query templates
+3. Sends to GPT-4 for NL-to-SQL conversion
+4. Parses JSON response: `{query_type, structured_query, sql_query, required_tables}`
+5. Handles JSON parse failures with a simple fallback
+
+**Key Design:**
+- Date column is DATE type (DuckDB auto-detection)
+- Uses `YEAR()`, `QUARTER()`, `MONTH()` functions directly
+- Dynamic YoY patterns using self-joins (no hardcoded years)
+- Context truncated to 3500 chars to stay within token limits
+
+#### Agent 2: DataExtractionAgent
+**Purpose:** Executes SQL queries and retrieves data
+
+**Process:**
+1. For **summarization**: Gathers summary stats, top categories, regional performance
+2. For **Q&A with SQL**: Executes SQL query via DuckDB
+3. For **empty results**: Adds fallback data + dataset metadata for context
+4. For **SQL errors**: Provides smart fallback based on query intent:
+   - Category queries -> `get_top_categories(10)`
+   - Region/state queries -> `get_regional_performance()`
+   - Other queries -> `get_summary_statistics()`
+5. For **no SQL generated**: Same smart fallback strategy
+
+**Fallback Logic:** Three-tier fallback ensures the system always returns useful data.
+
+#### Agent 3: ValidationAgent
+**Purpose:** Validates extracted data quality
+
+**Process:**
+1. Checks if data was extracted successfully
+2. Validates data completeness (summarization: checks required keys)
+3. Checks for empty Q&A results (reduces confidence)
+4. Uses LLM for semantic validation:
+   - Is data relevant to the query?
+   - Any anomalies or inconsistencies?
+   - Sufficient quality to answer?
+5. Assigns confidence score (0.0 - 1.0)
+
+**Output:**
 ```python
-async def process_queries_batch(queries: List[str]):
-    """Process multiple queries in parallel"""
-    tasks = [orchestrator.process_query(q) for q in queries]
-    results = await asyncio.gather(*tasks)
-    return results
+{
+    "is_valid": bool,
+    "confidence": float,      # 0.0 to 1.0
+    "issues": [str],
+    "recommendations": [str],
+    "llm_assessment": str      # LLM's semantic review
+}
 ```
 
-### 2. Cost Optimization Strategies
+#### Agent 4: ResponseGenerationAgent
+**Purpose:** Generates business-friendly natural language responses
 
-**Token Management:**
-```python
-import tiktoken
+**Process:**
+1. Analyzes data limitations (empty results, fallbacks, errors)
+2. For empty results: Explains WHY using dataset metadata
+   - Checks for YoY queries with insufficient years
+   - Checks for quarter availability (Q3/Q4 may not exist)
+3. Constructs prompt with: data to present, validation status, fallback notes
+4. GPT-4 generates executive-style response with:
+   - Direct answer to user's question
+   - Specific numbers and percentages
+   - Key trends and patterns
+   - Business-friendly language
+   - Data limitation explanations when applicable
 
-class TokenOptimizer:
-    def __init__(self, model="gpt-4"):
-        self.encoding = tiktoken.encoding_for_model(model)
-        self.max_tokens = 8000  # Reserve tokens for response
+---
 
-    def truncate_context(self, context: str) -> str:
-        """Truncate context to fit within token limits"""
-        tokens = self.encoding.encode(context)
+### 4. Data Processing Layer (`data_processor.py` - 317 lines)
 
-        if len(tokens) > self.max_tokens:
-            # Keep most recent context
-            truncated_tokens = tokens[-self.max_tokens:]
-            return self.encoding.decode(truncated_tokens)
+**Class: `DataProcessor`**
 
-        return context
+**Initialization:**
+- Connects to DuckDB (persistent file: `retail_data.duckdb`)
+- Auto-loads CSV files into tables if tables don't exist
+- Checks `information_schema.tables` to avoid re-loading
+
+**Three Datasets:**
+
+| Table Name | Source File | Key Columns |
+|---|---|---|
+| `amazon_sales` | Amazon Sale Report.csv | Order ID, Category, Status, Amount, Date, ship-state |
+| `inventory` | Sale Report.csv | Category, Size, Color, Stock |
+| `international_sales` | International sale Report.csv | CUSTOMER, Months, PCS, GROSS AMT |
+
+**Key Methods:**
+- `execute_query(sql)`: Execute SQL, return DataFrame
+- `get_table_schema(table)`: DESCRIBE table
+- `get_table_context(table)`: Schema + sample data + stats + value examples (for LLM prompts)
+- `get_summary_statistics()`: Cross-dataset summary (revenue, orders, customers)
+- `get_dataset_metadata()`: Date ranges, available years/quarters
+- `get_top_categories(limit)`: Top categories by revenue
+- `get_regional_performance()`: Sales by state
+
+**Cloud Deployment Handling:**
+- DuckDB file is ephemeral (`.gitignore` includes `*.duckdb`)
+- CSV files are committed to git
+- On cold start: `_load_datasets()` creates tables from CSVs
+- Subsequent requests reuse existing tables in the database
+
+---
+
+## Technology Stack
+
+| Technology | Version | Purpose |
+|---|---|---|
+| **LangGraph** | 1.0.1 | Agent workflow orchestration (StateGraph) |
+| **OpenAI GPT-4** | via openai 2.9.0 | NL understanding, SQL generation, insights |
+| **LangChain** | 0.3.27 | ChatOpenAI, message abstractions |
+| **LangChain-Core** | 0.3.80 | HumanMessage, SystemMessage |
+| **LangChain-OpenAI** | 0.3.35 | OpenAI integration |
+| **DuckDB** | 1.4.4 | Columnar OLAP analytics engine |
+| **Streamlit** | 1.49.1 | Web UI framework |
+| **Plotly** | 6.5.2 | Interactive visualizations |
+| **Pandas** | 2.2.3 | Data manipulation |
+| **NumPy** | 2.2.2 | Numerical computing |
+| **Pydantic** | 2.11.7 | Data validation |
+| **tiktoken** | 0.9.0 | Token counting |
+| **python-dotenv** | 1.0.1 | Environment variable management |
+
+---
+
+## Data Flow
+
+### Q&A Mode
+```
+1. User types question in chat input
+2. app.py updates agent status to "Agent 1: Running"
+3. QueryResolutionAgent:
+   - Fetches table contexts from DuckDB
+   - Sends NL query + schema to GPT-4
+   - Receives structured JSON with SQL query
+4. app.py updates agent status to "Agent 2: Running"
+5. DataExtractionAgent:
+   - Executes SQL on DuckDB
+   - If error/empty: provides fallback data
+   - Attaches dataset metadata
+6. app.py updates agent status to "Agent 3: Running"
+7. ValidationAgent:
+   - Validates data completeness & relevance
+   - LLM semantic validation
+   - Assigns confidence score
+8. app.py updates agent status to "Agent 4: Running"
+9. ResponseGenerationAgent:
+   - Analyzes data limitations
+   - Generates business-friendly response via GPT-4
+10. app.py shows "All Done", then resets to "Ready"
+11. Response displayed in chat with expandable details:
+    - Generated SQL query
+    - Agent workflow status
+    - Data table (with DataFrame viewer)
+    - Interactive chart (auto-selected type)
 ```
 
-**Model Selection Strategy:**
-```python
-def select_model(query_complexity: str) -> str:
-    """Choose appropriate model based on complexity"""
-    if query_complexity == "simple":
-        return "gpt-3.5-turbo"  # Faster, cheaper
-    elif query_complexity == "complex":
-        return "gpt-4-turbo"     # More capable
-    return "gpt-4"
+### Summary Mode
 ```
-
-### 3. LangChain Integration at Scale
-
-**Optimized Chain:**
-```python
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
-from langchain.cache import RedisCache
-from langchain.globals import set_llm_cache
-
-# Enable caching
-set_llm_cache(RedisCache(redis_url="redis://localhost:6379"))
-
-# Create optimized chain
-template = PromptTemplate(
-    input_variables=["context", "query"],
-    template="""
-    Context: {context}
-    Question: {query}
-    Answer concisely:
-    """
-)
-
-chain = LLMChain(
-    llm=llm,
-    prompt=template,
-    verbose=False
-)
+1. User clicks "Generate Summary" button
+2. Orchestrator sends pre-defined summary query
+3. DataExtractionAgent gathers:
+   - Summary statistics (all 3 tables)
+   - Top 10 categories by revenue
+   - Top 10 states by revenue
+4. ResponseGenerationAgent creates executive summary
+5. UI displays:
+   - Executive summary text
+   - Agent workflow status
+   - Top Categories bar chart
+   - Regional Performance bar chart
+   - Detailed statistics in expanders
 ```
 
 ---
 
-## 📊 E. Monitoring & Evaluation
+## Error Handling & Resilience
 
-### 1. Key Metrics
-
-#### Performance Metrics
-```python
-import time
-from prometheus_client import Counter, Histogram
-
-# Define metrics
-query_duration = Histogram(
-    'query_duration_seconds',
-    'Time spent processing query',
-    ['query_type']
-)
-
-query_counter = Counter(
-    'queries_total',
-    'Total number of queries',
-    ['status']
-)
-
-# Track metrics
-@query_duration.labels(query_type='qa').time()
-def process_query(query: str):
-    # ... processing logic
-    pass
+### Multi-Level Fallback Strategy
+```
+Level 1: SQL query succeeds -> return exact results
+Level 2: SQL fails -> smart fallback based on query intent
+Level 3: No SQL generated -> provide relevant summary data
+Level 4: Agent error -> propagate error, continue pipeline
+Level 5: Complete failure -> return error message with context
 ```
 
-**Tracked Metrics:**
-- Query latency (p50, p95, p99)
-- Throughput (queries per second)
-- Error rate
-- Cache hit rate
-- LLM API costs
-- Data scanned per query
+### Per-Agent Error Isolation
+- Each agent wrapped in try/except
+- Errors appended to `state['errors']` list (accumulated via `operator.add`)
+- Pipeline continues even if individual agents fail
+- Validation agent assigns lower confidence on partial data
 
-#### Quality Metrics
-```python
-class QualityMonitor:
-    def __init__(self):
-        self.metrics = {
-            'accuracy_scores': [],
-            'confidence_scores': [],
-            'user_feedback': []
-        }
-
-    def log_response_quality(self, result: dict):
-        """Track response quality"""
-        self.metrics['confidence_scores'].append(
-            result['validation']['confidence']
-        )
-
-    def calculate_avg_confidence(self) -> float:
-        return sum(self.metrics['confidence_scores']) / \
-               len(self.metrics['confidence_scores'])
-```
-
-### 2. Error Handling & Fallback Strategies
-
-**Circuit Breaker Pattern:**
-```python
-from pybreaker import CircuitBreaker
-
-llm_breaker = CircuitBreaker(fail_max=5, timeout_duration=60)
-
-@llm_breaker
-def call_llm_api(prompt: str):
-    """Call LLM with circuit breaker"""
-    try:
-        return llm.invoke(prompt)
-    except Exception as e:
-        logger.error(f"LLM API error: {e}")
-        raise
-```
-
-**Fallback Strategy:**
-```python
-def generate_response_with_fallback(query: str):
-    try:
-        # Try primary LLM
-        return call_gpt4(query)
-    except Exception:
-        # Fallback to GPT-3.5
-        try:
-            return call_gpt35(query)
-        except Exception:
-            # Fallback to rule-based response
-            return generate_rule_based_response(query)
-```
-
-### 3. Logging & Observability
-
-**Structured Logging:**
-```python
-import logging
-import json
-from datetime import datetime
-
-class StructuredLogger:
-    def __init__(self):
-        self.logger = logging.getLogger(__name__)
-
-    def log_query(self, query: str, metadata: dict):
-        log_entry = {
-            'timestamp': datetime.utcnow().isoformat(),
-            'query': query,
-            'metadata': metadata,
-            'type': 'query_log'
-        }
-        self.logger.info(json.dumps(log_entry))
-```
-
-**Monitoring Dashboard:**
-- **Grafana**: Visualize metrics from Prometheus
-- **DataDog**: Application performance monitoring
-- **CloudWatch/Stackdriver**: Cloud-native monitoring
+### UI Error Feedback
+- Agent status shows error state (red badge) on failure
+- Error messages displayed to user
+- Chat continues to work after errors
 
 ---
 
-## 🎯 Complete Scalable Architecture Diagram
+## Security
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        User Interface Layer                      │
-│  Streamlit (Load Balanced) + Nginx/API Gateway                  │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-┌────────────────────────────▼────────────────────────────────────┐
-│                   Multi-Agent Orchestration                      │
-│            LangGraph Agents (Containerized, K8s)                │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
-│  │Query Resolver│ │Data Extractor│ │  Validator   │            │
-│  └──────────────┘ └──────────────┘ └──────────────┘            │
-└────────────────────────────┬────────────────────────────────────┘
-                             │
-        ┌────────────────────┼────────────────────┐
-        │                    │                    │
-┌───────▼────────┐  ┌────────▼──────┐  ┌─────────▼────────┐
-│  LLM Services  │  │ Vector Store  │  │  Data Warehouse  │
-│   (OpenAI)     │  │(FAISS/Pinecone)│  │  (BigQuery)      │
-│  + Cache Layer │  │  + Metadata   │  │  + Delta Lake    │
-└────────────────┘  └────────────────┘  └─────────┬────────┘
-                                                   │
-                                        ┌──────────▼─────────┐
-                                        │   Data Lake (S3)   │
-                                        │   Raw CSV Files    │
-                                        └────────────────────┘
-
-        ┌────────────────────────────────────────┐
-        │    Supporting Infrastructure           │
-        ├────────────────────────────────────────┤
-        │ • Redis Cache (Query Results)          │
-        │ • Airflow (ETL Orchestration)          │
-        │ • Kafka (Streaming, Optional)          │
-        │ • Prometheus + Grafana (Monitoring)    │
-        │ • ELK Stack (Logging)                  │
-        └────────────────────────────────────────┘
-```
+- **API Key Management:**
+  - User enters key via Streamlit UI (password field)
+  - Key stored in `st.session_state` only (memory)
+  - Never persisted to disk or `.env`
+  - Masked display: `sk-a...1234`
+  - "Change API Key" clears cached orchestrator
+- **Data Security:**
+  - DuckDB queries are parameterized where possible
+  - No external data persistence
+  - Session-scoped chat history
 
 ---
 
-## 💰 Cost Optimization
+## Deployment
 
-### 1. Data Storage Costs
-- **Lifecycle Policies**: Move old data to cheaper storage (S3 Glacier)
-- **Compression**: Use Parquet/ORC with compression (saves 80-90%)
-- **Partitioning**: Only scan relevant partitions
+### Local Development
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+# Enter API key in browser sidebar
+```
 
-### 2. LLM API Costs
-- **Caching**: Reduce redundant API calls by 60-80%
-- **Model Selection**: Use GPT-3.5 for simple queries
-- **Prompt Optimization**: Reduce token usage
-- **Batch Processing**: Lower per-token costs
+### Streamlit Cloud
+1. Push code to GitHub (CSV files included in repo)
+2. Connect repo on share.streamlit.io
+3. DuckDB auto-rebuilds from CSV on cold start
+4. `.duckdb` files in `.gitignore` (ephemeral filesystem)
+5. `requirements.txt` has pinned versions for reproducibility
+6. API key entered by user at runtime (no secrets file needed)
 
-### 3. Compute Costs
-- **Auto-scaling**: Scale down during low traffic
-- **Spot Instances**: Use for batch processing (70% savings)
-- **Serverless**: Pay only for actual compute time
-
-**Estimated Monthly Costs (100GB dataset, 10K queries/month):**
-- Data Storage (S3 + BigQuery): $150-300
-- LLM API Costs: $500-1,500
-- Compute (K8s cluster): $200-500
-- **Total: ~$1,000-2,500/month**
-
----
-
-## 🚀 Deployment Strategy
-
-### Containerization (Docker)
+### Docker (Production)
 ```dockerfile
 FROM python:3.9-slim
-
 WORKDIR /app
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
-
 EXPOSE 8501
-
 CMD ["streamlit", "run", "app.py", "--server.port=8501"]
 ```
 
-### Kubernetes Deployment
-```yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: retail-insights-assistant
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: retail-insights
-  template:
-    metadata:
-      labels:
-        app: retail-insights
-    spec:
-      containers:
-      - name: app
-        image: retail-insights:latest
-        ports:
-        - containerPort: 8501
-        env:
-        - name: OPENAI_API_KEY
-          valueFrom:
-            secretKeyRef:
-              name: api-secrets
-              key: openai-key
+---
+
+## Project Structure
+
+```
+blend_assignment/
+  app.py                  # Streamlit UI (884 lines)
+  orchestrator.py         # LangGraph workflow (166 lines)
+  agents.py               # 4 Agent classes (541 lines)
+  data_processor.py       # DuckDB data layer (317 lines)
+  requirements.txt        # Pinned dependencies (26 packages)
+  .env                    # Environment variables (optional)
+  .gitignore              # Excludes .duckdb, __pycache__, .env
+  ARCHITECTURE.md         # This file
+  Sales Dataset/
+    Amazon Sale Report.csv
+    Sale Report.csv
+    International sale Report.csv
+    Cloud Warehouse Compersion Chart.csv
+    Expense IIGF.csv
+    May-2022.csv
+    P  L March 2021.csv
 ```
 
 ---
 
-## 📝 Summary
+## Scalability Roadmap (100GB+)
 
-This architecture provides:
-- ✅ **Horizontal Scalability**: Handle 100GB+ datasets
-- ✅ **Cost Efficiency**: Optimized storage and compute
-- ✅ **High Performance**: Sub-second query responses
-- ✅ **Reliability**: Error handling and fallbacks
-- ✅ **Observability**: Comprehensive monitoring
-- ✅ **Flexibility**: Cloud-agnostic design
+For scaling beyond the current implementation, see the following considerations:
 
-The system can scale from gigabytes to petabytes by leveraging cloud-native services, distributed computing, and intelligent caching strategies.
+### Data Layer
+- **Current:** DuckDB (embedded, single-machine)
+- **Scale:** BigQuery / Snowflake / Databricks SQL
+- **Strategy:** Partition by year/quarter, use Delta Lake/Parquet
+
+### Processing
+- **Current:** Pandas + DuckDB
+- **Scale:** PySpark / Dask for distributed processing
+- **Strategy:** Apache Airflow for ETL orchestration
+
+### LLM Optimization
+- **Current:** Direct OpenAI API calls
+- **Scale:** Redis caching, prompt optimization, model routing
+- **Strategy:** GPT-3.5 for simple queries, GPT-4 for complex
+
+### Retrieval Enhancement
+- **Current:** SQL-based query execution
+- **Scale:** RAG with vector embeddings (FAISS/Pinecone)
+- **Strategy:** Semantic search over data partition summaries
+
+### Infrastructure
+- **Current:** Single Streamlit instance
+- **Scale:** Kubernetes with horizontal pod autoscaling
+- **Strategy:** Docker containers, load balancer, Redis cache
+
+### Monitoring
+- **Current:** Python logging
+- **Scale:** Prometheus + Grafana, structured logging, alerting
+- **Strategy:** Track query latency, error rates, LLM costs, cache hit rates
+
+### Estimated Costs (100GB, 10K queries/month)
+- Data Storage (S3 + BigQuery): $150-300/month
+- LLM API Costs: $500-1,500/month
+- Compute (K8s cluster): $200-500/month
+- **Total: ~$1,000-2,500/month**

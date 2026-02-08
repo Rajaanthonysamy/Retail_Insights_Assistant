@@ -194,9 +194,9 @@ class DataProcessor:
                 intl_stats = self.conn.execute("""
                     SELECT
                         COUNT(*) as total_transactions,
-                        SUM(PCS) as total_pieces,
-                        SUM("GROSS AMT") as total_revenue,
-                        AVG("GROSS AMT") as avg_transaction_value,
+                        SUM(TRY_CAST(PCS AS DOUBLE)) as total_pieces,
+                        SUM(TRY_CAST("GROSS AMT" AS DOUBLE)) as total_revenue,
+                        AVG(TRY_CAST("GROSS AMT" AS DOUBLE)) as avg_transaction_value,
                         COUNT(DISTINCT CUSTOMER) as unique_customers
                     FROM international_sales
                 """).fetchdf()
@@ -207,7 +207,7 @@ class DataProcessor:
                 inventory_stats = self.conn.execute("""
                     SELECT
                         COUNT(*) as total_skus,
-                        SUM(Stock) as total_stock,
+                        SUM(TRY_CAST(Stock AS DOUBLE)) as total_stock,
                         COUNT(DISTINCT Category) as total_categories,
                         COUNT(DISTINCT Color) as total_colors
                     FROM inventory
