@@ -59,72 +59,35 @@ st.markdown("""
         font-style: italic;
     }
 
-    /* Right Sidebar - matches left sidebar styling */
-    .right-sidebar {
-        position: fixed;
-        right: 0;
-        top: 0;
-        height: 100vh;
-        width: 21rem;
+    /* Right sidebar panel styling */
+    .right-panel {
         background-color: #f0f2f6;
-        padding: 1rem 1rem;
-        overflow-y: auto;
-        overflow-x: hidden;
-        z-index: 999991;
-        transition: transform 0.3s ease-in-out;
-    }
-
-    .right-sidebar.collapsed {
-        transform: translateX(100%);
-    }
-
-    .right-sidebar-toggle {
-        position: fixed;
-        right: 21rem;
-        top: 50%;
-        transform: translateY(-50%);
-        z-index: 999992;
-        background-color: #667eea;
-        color: white;
-        border: none;
-        border-radius: 8px 0 0 8px;
-        padding: 12px 8px;
-        cursor: pointer;
-        font-size: 18px;
-        transition: right 0.3s ease-in-out;
-    }
-
-    .right-sidebar-toggle.collapsed {
-        right: 0;
-    }
-
-    /* Adjust main content when right sidebar is visible */
-    section[data-testid="stAppViewContainer"] > .main {
-        margin-right: 21rem;
-        transition: margin-right 0.3s ease-in-out;
-    }
-
-    section[data-testid="stAppViewContainer"] > .main.sidebar-collapsed {
-        margin-right: 0;
+        padding: 1rem;
+        border-left: 1px solid #e0e0e0;
+        border-radius: 8px;
+        min-height: 400px;
+        margin-top: -2rem;
     }
 
 </style>
 """, unsafe_allow_html=True)
 
 
-@st.cache_resource
-def initialize_orchestrator():
-    """Initialize the multi-agent orchestrator (cached)"""
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        st.error("⚠️ OpenAI API key not found. Please set OPENAI_API_KEY in your .env file")
-        st.stop()
+def get_api_key():
+    """Get API key from session state only (user must enter it via UI)"""
+    if 'openai_api_key' in st.session_state and st.session_state.openai_api_key:
+        return st.session_state.openai_api_key
+    return None
 
+
+@st.cache_resource
+def initialize_orchestrator(_api_key):
+    """Initialize the multi-agent orchestrator (cached per API key)"""
     model_name = os.getenv("MODEL_NAME", "gpt-4-turbo-preview")
     data_path = os.getenv("DATA_PATH", "Sales Dataset/")
 
     return RetailInsightsOrchestrator(
-        api_key=api_key,
+        api_key=_api_key,
         model_name=model_name,
         data_path=data_path
     )
@@ -295,16 +258,39 @@ def main():
         unsafe_allow_html=True
     )
 
-    # Initialize orchestrator
-    try:
-        orchestrator = initialize_orchestrator()
-    except Exception as e:
-        st.error(f"Failed to initialize system: {str(e)}")
-        st.stop()
-
     # Sidebar
     with st.sidebar:
         st.markdown("## ⚙️ Configuration")
+
+        # API Key Input
+        st.markdown("### 🔑 OpenAI API Key")
+        api_key = get_api_key()
+
+        if api_key:
+            # Key already set - show masked version
+            masked = api_key[:4] + "..." + api_key[-4:]
+            st.success(f"API Key active: `{masked}`")
+            if st.button("🔄 Change API Key", key="change_key"):
+                st.session_state.openai_api_key = ""
+                initialize_orchestrator.clear()
+                st.rerun()
+        else:
+            # No key yet - user must enter it
+            key_input = st.text_input(
+                "Enter your OpenAI API Key:",
+                type="password",
+                placeholder="sk-...",
+                key="api_key_input"
+            )
+            if st.button("✅ Set API Key", type="primary", key="set_key"):
+                if key_input and len(key_input) > 10:
+                    st.session_state.openai_api_key = key_input
+                    st.rerun()
+                else:
+                    st.error("Please enter a valid API key")
+            st.info("Key is stored in memory only for this session.")
+
+        st.markdown("---")
 
         mode = st.radio(
             "Select Mode:",
@@ -313,63 +299,63 @@ def main():
         )
 
         st.markdown("---")
-        st.markdown("### 📖 About")
-        st.markdown("""
-        This is a **multi-agent GenAI system** that:
-        - 🤖 Uses 4 specialized agents
-        - 📊 Analyzes sales data with DuckDB
-        - 🧠 Powered by LangGraph & OpenAI
-        - ⚡ Scales to 100GB+ datasets
-        """)
+        # st.markdown("### 📖 About")
+        # st.markdown("""
+        # This is a **multi-agent GenAI system** that:
+        # - 🤖 Uses 4 specialized agents
+        # - 📊 Analyzes sales data with DuckDB
+        # - 🧠 Powered by LangGraph & OpenAI
+        # - ⚡ Scales to 100GB+ datasets
+        # """)
 
-        st.markdown("---")
-        st.markdown("### 🤖 Agent Pipeline")
+        # st.markdown("---")
+        # st.markdown("### 🤖 Agent Pipeline")
 
-        with st.expander("🔍 **Agent 1: Query Resolution**", expanded=False):
-            st.markdown("""
-            **Purpose:** Converts natural language to SQL
+        # with st.expander("🔍 **Agent 1: Query Resolution**", expanded=False):
+        #     st.markdown("""
+        #     **Purpose:** Converts natural language to SQL
 
-            **Tasks:**
-            - Analyzes user intent
-            - Maps to database schema
-            - Generates optimized SQL queries
-            - Handles date parsing & filters
-            """)
+        #     **Tasks:**
+        #     - Analyzes user intent
+        #     - Maps to database schema
+        #     - Generates optimized SQL queries
+        #     - Handles date parsing & filters
+        #     """)
 
-        with st.expander("📊 **Agent 2: Data Extraction**", expanded=False):
-            st.markdown("""
-            **Purpose:** Executes queries & retrieves data
+        # with st.expander("📊 **Agent 2: Data Extraction**", expanded=False):
+        #     st.markdown("""
+        #     **Purpose:** Executes queries & retrieves data
 
-            **Tasks:**
-            - Runs SQL on DuckDB
-            - Handles query errors
-            - Provides fallback data
-            - Adds dataset metadata
-            """)
+        #     **Tasks:**
+        #     - Runs SQL on DuckDB
+        #     - Handles query errors
+        #     - Provides fallback data
+        #     - Adds dataset metadata
+        #     """)
 
-        with st.expander("✅ **Agent 3: Validation**", expanded=False):
-            st.markdown("""
-            **Purpose:** Validates results quality
+        # with st.expander("✅ **Agent 3: Validation**", expanded=False):
+        #     st.markdown("""
+        #     **Purpose:** Validates results quality
 
-            **Tasks:**
-            - Checks data completeness
-            - Validates against query intent
-            - Assigns confidence scores
-            - Identifies data limitations
-            """)
+        #     **Tasks:**
+        #     - Checks data completeness
+        #     - Validates against query intent
+        #     - Assigns confidence scores
+        #     - Identifies data limitations
+        #     """)
 
-        with st.expander("💬 **Agent 4: Response Generation**", expanded=False):
-            st.markdown("""
-            **Purpose:** Creates insights & recommendations
+        # with st.expander("💬 **Agent 4: Response Generation**", expanded=False):
+        #     st.markdown("""
+        #     **Purpose:** Creates insights & recommendations
 
-            **Tasks:**
-            - Generates business insights
-            - Explains data limitations
-            - Provides actionable advice
-            - Formats professional responses
-            """)
+        #     **Tasks:**
+        #     - Generates business insights
+        #     - Explains data limitations
+        #     - Provides actionable advice
+        #     - Formats professional responses
+        #     """)
 
-        st.markdown("---")
+        # st.markdown("---")
         st.markdown("### 🔍 Example Questions")
         st.markdown("""
         - Which category has the highest sales?
@@ -379,111 +365,101 @@ def main():
         - What are the sales trends?
         """)
 
+    # Initialize orchestrator (only when API key is available)
+    api_key = get_api_key()
+    if not api_key:
+        st.warning("🔑 Please enter your OpenAI API Key in the sidebar to get started.")
+        st.stop()
+
+    try:
+        orchestrator = initialize_orchestrator(api_key)
+    except Exception as e:
+        st.error(f"Failed to initialize system: {str(e)}")
+        st.stop()
+
     # Main content
     if mode == "💬 Conversational Q&A":
-        # Initialize session state for chat history and agent status
+        # Initialize session state
         if 'chat_history' not in st.session_state:
             st.session_state.chat_history = []
         if 'agent_status' not in st.session_state:
-            st.session_state.agent_status = 0  # 0 = ready, 1-4 = processing, 5 = completed
-        if 'show_right_sidebar' not in st.session_state:
-            st.session_state.show_right_sidebar = True  # Default: show sidebar
+            st.session_state.agent_status = 0  # 0 = ready, 1-4 = processing
 
-        # Apply main content margin class based on sidebar state
-        sidebar_class = "" if st.session_state.show_right_sidebar else "sidebar-collapsed"
-        st.markdown(f'<script>document.querySelector("[data-testid=\\"stAppViewContainer\\"] > .main").classList.add("{sidebar_class}");</script>', unsafe_allow_html=True)
+        # Two-column layout: Main Chat (left) | Agent Sidebar (right)
+        col_main, col_sidebar = st.columns([7, 3])
 
-        # RIGHT SIDEBAR - Fixed position (like left sidebar)
-        sidebar_collapsed_class = "" if st.session_state.show_right_sidebar else "collapsed"
+        # ==========================================
+        # RIGHT SIDEBAR - Agent Pipeline
+        # ==========================================
+        with col_sidebar:
+            # st.markdown('<div class="right-panel">', unsafe_allow_html=True)
 
-        st.markdown(f"""
-        <div class="right-sidebar {sidebar_collapsed_class}" id="right-sidebar">
-            <div style="margin-bottom: 1rem;">
-                <h3 style="margin: 0; color: #262730;">🔄 Agent Pipeline</h3>
-                <p style="font-size: 0.875rem; color: #808495; margin: 0.5rem 0;">Monitor real-time execution</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+            st.markdown("## 🔄 Agent Pipeline")
+            st.markdown("---")
 
-        # Render agent status in sidebar
-        status_container = st.container()
+            # Live Status Section
+            st.markdown("### 📡 Live Status")
+            status_placeholder = st.empty()
+            render_agent_status_native(status_placeholder, st.session_state.agent_status)
 
-        # Only render content if sidebar is visible
-        if st.session_state.show_right_sidebar:
-            with status_container:
-                # Create a container for the right sidebar content
-                st.markdown('<div id="right-sidebar-content">', unsafe_allow_html=True)
+            st.markdown("---")
 
-                # Status placeholder
-                status_placeholder = st.empty()
-                render_agent_status_native(status_placeholder, st.session_state.agent_status)
+            # Agent Details (collapsible - same as left sidebar)
+            st.markdown("### 🤖 Agent Details")
 
-                st.markdown("---")
+            with st.expander("🔍 **Agent 1: Query Resolution**", expanded=False):
+                st.markdown("""
+                **Purpose:** Converts natural language to SQL
 
-                # Agent Details
-                st.markdown("### 📋 Multi-Agent System")
+                **Tasks:**
+                - Analyzes user intent
+                - Maps to database schema
+                - Generates optimized SQL
+                - Handles date parsing & filters
+                """)
 
-                with st.expander("🔍 **Agent 1: Query Resolution**", expanded=False):
-                    st.markdown("""
-                    **Purpose:** Analyzes user query & generates SQL
+            with st.expander("📊 **Agent 2: Data Extraction**", expanded=False):
+                st.markdown("""
+                **Purpose:** Executes queries & retrieves data
 
-                    **Tasks:**
-                    - Understands natural language
-                    - Extracts intent & parameters
-                    - Generates optimized SQL
-                    - Handles complex queries
-                    """)
+                **Tasks:**
+                - Runs SQL on DuckDB
+                - Handles query errors
+                - Provides fallback data
+                - Adds dataset metadata
+                """)
 
-                with st.expander("📊 **Agent 2: Data Extraction**", expanded=False):
-                    st.markdown("""
-                    **Purpose:** Executes SQL & retrieves data
+            with st.expander("✅ **Agent 3: Validation**", expanded=False):
+                st.markdown("""
+                **Purpose:** Validates results quality
 
-                    **Tasks:**
-                    - Runs queries on DuckDB
-                    - Handles query errors
-                    - Provides fallback data
-                    - Adds dataset metadata
-                    """)
+                **Tasks:**
+                - Checks data completeness
+                - Validates against query intent
+                - Assigns confidence scores
+                - Identifies data limitations
+                """)
 
-                with st.expander("✅ **Agent 3: Validation**", expanded=False):
-                    st.markdown("""
-                    **Purpose:** Validates data quality
+            with st.expander("💬 **Agent 4: Response Generation**", expanded=False):
+                st.markdown("""
+                **Purpose:** Creates insights & recommendations
 
-                    **Tasks:**
-                    - Checks data completeness
-                    - Validates against query intent
-                    - Assigns confidence scores
-                    - Identifies data limitations
-                    """)
+                **Tasks:**
+                - Generates business insights
+                - Explains data limitations
+                - Provides actionable advice
+                - Formats professional responses
+                """)
 
-                with st.expander("💬 **Agent 4: Response Generation**", expanded=False):
-                    st.markdown("""
-                    **Purpose:** Creates insights & recommendations
+            st.markdown('</div>', unsafe_allow_html=True)
 
-                    **Tasks:**
-                    - Generates business insights
-                    - Explains data limitations
-                    - Provides actionable advice
-                    - Formats professional responses
-                    """)
+        # ==========================================
+        # MAIN CONTENT - Chat Interface (left side)
+        # ==========================================
+        with col_main:
+            st.markdown("## 💬 Chat with Your Sales Data")
 
-                st.markdown('</div>', unsafe_allow_html=True)
-
-        # Toggle button for sidebar
-        toggle_collapsed_class = "" if st.session_state.show_right_sidebar else "collapsed"
-        toggle_icon = "👁️‍🗨️" if st.session_state.show_right_sidebar else "👁️"
-
-        if st.button(toggle_icon, key="btn_toggle_sidebar", help="Toggle Agent Panel"):
-            st.session_state.show_right_sidebar = not st.session_state.show_right_sidebar
-            st.rerun()
-
-        st.markdown("## 💬 Chat with Your Sales Data")
-
-        # MAIN CONTENT - Chat container
-        chat_container = st.container()
-
-        # Display chat history (chronological order - oldest first)
-        with chat_container:
+            # Display chat history (chronological order - oldest first)
             if st.session_state.chat_history:
                 for chat in st.session_state.chat_history:
                     # User message
@@ -666,71 +642,71 @@ def main():
             else:
                 st.info("👋 Start a conversation by asking a question below!")
 
-        # Fixed input at bottom (ChatGPT style)
-        st.markdown("---")
-        st.markdown("### 💬 Ask a Question")
+            # Fixed input at bottom
+            st.markdown("---")
+            st.markdown("### 💬 Ask a Question")
 
-        col1, col2 = st.columns([5, 1])
-        with col1:
-            user_query = st.text_input(
-                "Your question:",
-                placeholder="e.g., Which category saw the highest sales?",
-                key="user_query_input",
-                label_visibility="collapsed"
-            )
-        with col2:
-            submit_button = st.button("🚀 Send", type="primary", use_container_width=True)
+            input_col1, input_col2 = st.columns([5, 1])
+            with input_col1:
+                user_query = st.text_input(
+                    "Your question:",
+                    placeholder="e.g., Which category saw the highest sales?",
+                    key="user_query_input",
+                    label_visibility="collapsed"
+                )
+            with input_col2:
+                submit_button = st.button("🚀 Send", type="primary", use_container_width=True)
 
-        if st.button("🗑️ Clear Chat History"):
-            st.session_state.chat_history = []
-            st.rerun()
+            if st.button("🗑️ Clear Chat History"):
+                st.session_state.chat_history = []
+                st.rerun()
 
-        if submit_button and user_query:
-            import time
+            if submit_button and user_query:
+                import time
 
-            # Helper to update status panel using session state
-            def update_agent_status(agent_num, error_agent=None):
-                st.session_state.agent_status = agent_num
-                render_agent_status_native(status_placeholder, agent_num, error_agent)
+                # Helper to update status panel in right sidebar
+                def update_agent_status(agent_num, error_agent=None):
+                    st.session_state.agent_status = agent_num
+                    render_agent_status_native(status_placeholder, agent_num, error_agent)
 
-            # Show processing stages
-            update_agent_status(1)
-            time.sleep(0.3)
+                # Show processing stages
+                update_agent_status(1)
+                time.sleep(0.3)
 
-            update_agent_status(2)
-            time.sleep(0.2)
-
-            # Process the actual query with error handling
-            try:
-                result = orchestrator.process_query(user_query, query_type="qa")
-
-                update_agent_status(3)
+                update_agent_status(2)
                 time.sleep(0.2)
 
-                update_agent_status(4)
-                time.sleep(0.2)
+                # Process the actual query with error handling
+                try:
+                    result = orchestrator.process_query(user_query, query_type="qa")
 
-                # Show all completed
-                update_agent_status(5)
-                time.sleep(1.5)
+                    update_agent_status(3)
+                    time.sleep(0.2)
 
-                # Return to ready state
-                st.session_state.agent_status = 0
-            except Exception as e:
-                # Show error state on current agent
-                update_agent_status(2, error_agent=2)
-                st.error(f"❌ Error during processing: {str(e)}")
-                st.stop()
+                    update_agent_status(4)
+                    time.sleep(0.2)
 
-            # Add to chat history
-            st.session_state.chat_history.append({
-                'query': user_query,
-                'result': result,
-                'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            })
+                    # Show all completed
+                    update_agent_status(5)
+                    time.sleep(1.5)
 
-            # Rerun to show new message and clear input
-            st.rerun()
+                    # Return to ready state
+                    st.session_state.agent_status = 0
+                except Exception as e:
+                    # Show error state on current agent
+                    update_agent_status(2, error_agent=2)
+                    st.error(f"❌ Error during processing: {str(e)}")
+                    st.stop()
+
+                # Add to chat history
+                st.session_state.chat_history.append({
+                    'query': user_query,
+                    'result': result,
+                    'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                })
+
+                # Rerun to show new message and clear input
+                st.rerun()
 
 
     else:  # Summary Mode
